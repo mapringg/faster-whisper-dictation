@@ -170,7 +170,7 @@ Default: <win>+z on Windows (see below for MacOS and Linux defaults).''')
 If key-combo is not set, on macOS/linux the default behavior is double tapping a key to start recording.
 Tap the same key again to stop recording.
 
-On MacOS the key is Right Cmd and on Linux the key is Right Super (Right Win Key)
+On MacOS and on Linux the default key is Left Alt
 
 You can set to a different key for double triggering.
 
@@ -269,7 +269,7 @@ class App():
             return k
 
         if (platform.system() != 'Windows' and not self.args.key_combo) or self.args.double_key:
-            key = self.args.double_key or (platform.system() == 'Linux' and '<super_r>') or '<cmd_r>'
+            key = self.args.double_key or '<alt_l>'
             keylistener= DoubleKeyListener(self.start, self.stop, normalize_key_names(key, parse=True))
             self.m.on_enter_READY(lambda *_: print("Double tap ", key, " to start recording. Tap again to stop recording"))
         else:
