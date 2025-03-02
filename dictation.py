@@ -5,11 +5,13 @@ import argparse
 import platform
 import pyaudio
 import numpy as np
-from faster_whisper import WhisperModel
+import os
+import requests
+import json
+import wave
+import tempfile
 from pynput import keyboard
 from transitions import Machine
-
-
 
 if platform.system() == 'Windows':
     import winsound
@@ -33,36 +35,121 @@ else:
         return data            
 
 
-class SpeechTranscriber:
-    def __init__(self, callback, model_size='base', device='cpu', compute_type="int8"):
+class GroqTranscriber:
+    def __init__(self, callback, model="whisper-large-v3-turbo"):
         self.callback = callback
-        self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
-
+        self.model = model
+        self.api_key = os.environ.get("GROQ_API_KEY")
+        if not self.api_key:
+            raise ValueError("GROQ_API_KEY environment variable is not set")
+        
     def transcribe(self, event):
-        print('Transcribing...')
+        print('Transcribing with Groq API...')
         audio = event.kwargs.get('audio', None)
+        language = None
+        
+        # Extract language from the audio callback parameters
+        if 'language' in event.kwargs:
+            language = event.kwargs['language']
+            print(f"Using language: {language}")
+            
         if audio is not None:
-            segments, info = self.model.transcribe(audio, beam_size=5)
-            print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
-            self.callback(segments=segments)
+            # Save audio to a temporary WAV file
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+                temp_filename = temp_file.name
+                
+            # Convert numpy array to WAV file
+            with wave.open(temp_filename, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)  # 16-bit
+                wf.setframerate(16000)
+                wf.writeframes((audio * 32768).astype(np.int16).tobytes())
+            
+            try:
+                # Send the audio file to Groq API for transcription
+                headers = {
+                    "Authorization": f"Bearer {self.api_key}"
+                }
+                
+                # Create a prompt for the Groq API to transcribe the audio
+                prompt = "Please transcribe the following audio accurately:"
+                
+                # Prepare the API request
+                with open(temp_filename, 'rb') as audio_file:
+                    files = {
+                        'file': audio_file,
+                    }
+                    data = {
+                        'model': self.model,
+                        'prompt': prompt,
+                        'temperature': 0.0
+                    }
+                    
+                    # Add language parameter if specified
+                    if language:
+                        # Validate that language is a string and not an event object
+                        if isinstance(language, str):
+                            data['language'] = language
+                        else:
+                            print(f"Warning: Invalid language format: {language}, ignoring language parameter")
+                    
+                    # Make the API request to Groq
+                    response = requests.post(
+                        "https://api.groq.com/openai/v1/audio/transcriptions",
+                        headers=headers,
+                        files=files,
+                        data=data
+                    )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    text = result.get("text", "")
+                    
+                    # Create a simple segment object to match the Whisper format
+                    class Segment:
+                        def __init__(self, text):
+                            self.text = text
+                    
+                    segments = [Segment(text)]
+                    self.callback(segments=segments)
+                else:
+                    print(f"Error from Groq API: {response.status_code}")
+                    print(response.text)
+                    self.callback(segments=[])
+            
+            except Exception as e:
+                print(f"Error during transcription: {str(e)}")
+                self.callback(segments=[])
+            
+            finally:
+                # Clean up the temporary file
+                try:
+                    os.unlink(temp_filename)
+                except:
+                    pass
         else:
             self.callback(segments=[])
+
 
 class Recorder:
     def __init__(self, callback):
         self.callback = callback
         self.recording = False
 
-    def start(self, language=None):
+    def start(self, event):
         print('Recording ...')
-        thread = threading.Thread(target=self._record_impl, args=())
+        # Extract language from event if it exists, otherwise use None
+        language = None
+        if hasattr(event, 'kwargs') and 'language' in event.kwargs:
+            language = event.kwargs['language']
+        thread = threading.Thread(target=self._record_impl, args=(language,))
         thread.start()
 
     def stop(self):
         print('Done recording.')
         self.recording = False
 
-    def _record_impl(self):
+    def _record_impl(self, language=None):
         self.recording = True
 
         frames_per_buffer = 1024
@@ -85,7 +172,12 @@ class Recorder:
         audio_data = np.frombuffer(b''.join(frames), dtype=np.int16)
         audio_data_fp32 = audio_data.astype(np.float32) / 32768.0
 
-        self.callback(audio=audio_data_fp32)
+        # Pass language parameter to callback if it's a valid string
+        if language and isinstance(language, str):
+            print(f"Passing language to transcriber: {language}")
+            self.callback(audio=audio_data_fp32, language=language)
+        else:
+            self.callback(audio=audio_data_fp32)
 
 
 class KeyboardReplayer():
@@ -148,14 +240,11 @@ class DoubleKeyListener():
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Dictation app powered by Faster whisper')
-    parser.add_argument('-m', '--model-name', type=str, default='base',
+    parser = argparse.ArgumentParser(description='Dictation app powered by Groq API')
+    parser.add_argument('-m', '--model-name', type=str, default='whisper-large-v3-turbo',
                         help='''\
-Size of the model to use
-(tiny, tiny.en, base, base.en, small, small.en, medium, medium.en, large-v1, large-v2, or large).
-A path to a converted model directory, or a CTranslate2-converted Whisper model ID from the Hugging Face Hub.
-When a size or a model ID is configured, the converted model is downloaded from the Hugging Face Hub.
-Default: base.''')
+Groq model to use for transcription.
+Default: whisper-large-v3-turbo.''')
     parser.add_argument('-k', '--key-combo', type=str,
                         help='''\
 Specify the key combination to toggle the app.
@@ -180,14 +269,13 @@ You can set to a different key for double triggering.
 Specify the maximum recording time in seconds.
 The app will automatically stop recording after this duration.
 Default: 30 seconds.''')
-    parser.add_argument('-v', '--device', type=str, default='cpu',
+    parser.add_argument('-l', '--language', type=str, default=None,
                         help='''\
-By default we use 'cpu' for inference.
-If you have supported GPU with proper driver and libraries installed, you can set it to 'auto' or 'cuda'.''')
+Specify the language of the audio for better transcription accuracy.
+If not specified, Groq will auto-detect the language.
+Example: 'en' for English, 'fr' for French, etc.
 
-    parser.add_argument('-c', '--compute-type', type=str, default='int8',
-                        help='''\
-If your GPU stack supports it, you can set compute-type to 'float32' or 'float16' to improve accuracy. Default 'int8' ''')
+Supported languages: af, am, ar, as, az, ba, be, bg, bn, bo, br, bs, ca, cs, cy, da, de, el, en, es, et, eu, fa, fi, fo, fr, gl, gu, ha, haw, he, hi, hr, ht, hu, hy, id, is, it, ja, jv, ka, kk, km, kn, ko, la, lb, ln, lo, lt, lv, mg, mi, mk, ml, mn, mr, ms, mt, my, ne, nl, nn, no, oc, pa, pl, ps, pt, ro, ru, sa, sd, si, sk, sl, sn, so, sq, sr, su, sv, sw, ta, te, tg, th, tl, tr, tt, uk, ur, uz, vi, yi, yo, yue, zh''')
 
     args = parser.parse_args()
     return args
@@ -215,9 +303,10 @@ class App():
         self.m = m
         self.args = args
         self.recorder    = Recorder(m.finish_recording)
-        self.transcriber = SpeechTranscriber(m.finish_transcribing, args.model_name, args.device, args.compute_type)
+        self.transcriber = GroqTranscriber(m.finish_transcribing, args.model_name)
         self.replayer    = KeyboardReplayer(m.finish_replaying)
         self.timer = None
+        self.language = args.language
 
         m.on_enter_RECORDING(self.recorder.start)
         m.on_enter_TRANSCRIBING(self.transcriber.transcribe)
@@ -242,7 +331,7 @@ class App():
             if self.args.max_time:
                 self.timer = threading.Timer(self.args.max_time, self.timer_stop)
                 self.timer.start()
-            self.m.start_recording()
+            self.m.start_recording(language=self.language)
             return True
 
     def stop(self):
@@ -282,4 +371,4 @@ class App():
 
 if __name__ == "__main__":
     args = parse_args()
-    App(args).run()
+    App(args).run() 
