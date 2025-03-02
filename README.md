@@ -10,7 +10,9 @@ This is a modified version of the original Faster Whisper Dictation tool that us
    pip install -r requirements.txt
    ```
 
-2. Set up your Groq API key as an environment variable:
+2. Set up your Groq API key in one of the following ways:
+
+   **Option 1:** Set as an environment variable:
 
    ```
    export GROQ_API_KEY="your_groq_api_key_here"
@@ -22,6 +24,16 @@ This is a modified version of the original Faster Whisper Dictation tool that us
    set GROQ_API_KEY=your_groq_api_key_here
    ```
 
+   **Option 2:** Create a `.env` file in your home directory:
+
+   ```
+   # On macOS/Linux
+   echo "GROQ_API_KEY=your_groq_api_key_here" > ~/.env
+
+   # On Windows
+   echo GROQ_API_KEY=your_groq_api_key_here > %USERPROFILE%\.env
+   ```
+
 ## Usage
 
 Run the dictation tool:
@@ -30,12 +42,19 @@ Run the dictation tool:
 python dictation.py
 ```
 
+Or use the provided shell script (on macOS/Linux):
+
+```
+./run.sh
+```
+
 ### Command Line Options
 
-- `-m, --model-name`: Specify the Groq model to use (default: "whisper-large-v3")
+- `-m, --model-name`: Specify the Groq model to use (default: "whisper-large-v3-turbo")
 - `-k, --key-combo`: Specify the key combination to toggle recording
 - `-d, --double-key`: Specify a key for double-tap activation
 - `-t, --max-time`: Maximum recording time in seconds (default: 30)
+- `-l, --language`: Specify the language for better transcription accuracy
 
 ### Default Key Combinations
 
@@ -61,6 +80,6 @@ This version uses the Groq API for transcription instead of running Whisper mode
 
 ## Troubleshooting
 
-- If you get an error about the GROQ_API_KEY not being set, make sure you've set the environment variable correctly
+- If you get an error about the GROQ_API_KEY not being set, make sure you've set the environment variable correctly or added it to your `~/.env` file
 - If transcription fails, check your internet connection and Groq API key validity
 - Make sure your microphone permissions are properly set up for your operating system

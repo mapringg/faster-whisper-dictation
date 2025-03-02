@@ -12,6 +12,7 @@ import wave
 import tempfile
 from pynput import keyboard
 from transitions import Machine
+from pathlib import Path
 
 if platform.system() == 'Windows':
     import winsound
@@ -35,13 +36,36 @@ else:
         return data            
 
 
+def load_env_from_file(env_file_path):
+    """Load environment variables from a file."""
+    if not os.path.exists(env_file_path):
+        return False
+    
+    with open(env_file_path, 'r') as file:
+        for line in file:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                key, value = line.split('=', 1)
+                os.environ[key.strip()] = value.strip()
+    return True
+
+
 class GroqTranscriber:
     def __init__(self, callback, model="whisper-large-v3-turbo"):
         self.callback = callback
         self.model = model
+        
+        # Try to get API key from environment
         self.api_key = os.environ.get("GROQ_API_KEY")
+        
+        # If not found, try to load from ~/.env file
         if not self.api_key:
-            raise ValueError("GROQ_API_KEY environment variable is not set")
+            env_file = os.path.join(str(Path.home()), '.env')
+            if load_env_from_file(env_file):
+                self.api_key = os.environ.get("GROQ_API_KEY")
+        
+        if not self.api_key:
+            raise ValueError("GROQ_API_KEY environment variable is not set. Please set it in your environment or in ~/.env file.")
         
     def transcribe(self, event):
         print('Transcribing with Groq API...')
