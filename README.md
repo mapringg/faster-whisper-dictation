@@ -111,3 +111,52 @@ This version uses the Groq API for transcription instead of running Whisper mode
   - Ensure your Groq API key is properly set in `~/.env`
   - Verify that the paths in the service configuration match your installation
   - Try running `run.sh` manually to verify it works outside the service
+
+## Service Management
+
+### User Systemd Service (Linux)
+
+The application is set up to run as a user systemd service on Linux. This means:
+
+1. The service runs in your user context, not as root
+2. It has proper access to your X11 display
+3. It starts automatically when you log in
+
+#### Useful Commands
+
+- Check service status:
+
+  ```
+  systemctl --user status dictation.service
+  ```
+
+- View logs:
+
+  ```
+  journalctl --user -u dictation.service
+  ```
+
+- Manually restart the service:
+
+  ```
+  systemctl --user restart dictation.service
+  ```
+
+- Stop the service:
+  ```
+  systemctl --user stop dictation.service
+  ```
+
+### Reverting Setup
+
+If you need to revert the setup (remove all service files), run:
+
+```
+./revert_setup.sh
+```
+
+This will:
+
+- Stop and disable both user and system services
+- Remove service files
+- Remove autostart entries

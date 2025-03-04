@@ -1,14 +1,15 @@
 [Unit]
 Description=Dictation Service
-After=network.target
+After=graphical-session.target
+PartOf=graphical-session.target
 
 [Service]
 Type=simple
-User=mapring
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-WorkingDirectory=/Users/mapring/Developer/faster-whisper-dictation
-ExecStart=/bin/bash /Users/mapring/Developer/faster-whisper-dictation/run.sh
+WorkingDirectory=%h/Developer/faster-whisper-dictation
+ExecStart=/bin/bash %h/Developer/faster-whisper-dictation/run.sh
 Restart=always
+RestartSec=5
 
 [Install]
-WantedBy=multi-user.target 
+WantedBy=graphical-session.target 

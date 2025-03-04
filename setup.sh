@@ -2,6 +2,7 @@
 
 # Make run.sh executable
 chmod +x run.sh
+chmod +x restart_dictation.sh
 
 # Detect OS
 if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -24,17 +25,30 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
 elif [[ -f /etc/debian_version ]] || [[ -f /etc/linuxmint/info ]]; then
     echo "Setting up for Linux Mint/Debian..."
     
-    # Copy service file
-    sudo cp dictation.service /etc/systemd/system/
+    # Create user systemd directory if it doesn't exist
+    mkdir -p ~/.config/systemd/user
     
-    # Reload systemd and enable service
-    sudo systemctl daemon-reload
-    sudo systemctl enable dictation.service
-    sudo systemctl start dictation.service
+    # Copy service file to user systemd directory
+    cp dictation.service ~/.config/systemd/user/
     
-    echo "Linux setup complete! The service will start automatically on boot."
-    echo "To check status: sudo systemctl status dictation.service"
-    echo "To view logs: journalctl -u dictation.service"
+    # Install autostart entry
+    mkdir -p ~/.config/autostart
+    cp dictation-autostart.desktop ~/.config/autostart/
+    
+    # Reload user systemd and enable service
+    systemctl --user daemon-reload
+    systemctl --user stop dictation.service 2>/dev/null
+    systemctl --user enable dictation.service
+    
+    # Start the service
+    systemctl --user start dictation.service
+    
+    echo "Linux setup complete! The service will start automatically on login."
+    echo "To check status: systemctl --user status dictation.service"
+    echo "To view logs: journalctl --user -u dictation.service"
+    echo "An autostart entry has been added to restart the service after login."
+    echo "If you encounter issues, try manually starting the service after login with:"
+    echo "systemctl --user restart dictation.service"
 
 else
     echo "Unsupported operating system"

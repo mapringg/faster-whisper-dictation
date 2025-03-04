@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Dictation Service
+Comment=Restart dictation service after login
+Exec=/home/mapring/Developer/faster-whisper-dictation/restart_dictation.sh
+Terminal=false
+Hidden=false
+X-GNOME-Autostart-enabled=true 
