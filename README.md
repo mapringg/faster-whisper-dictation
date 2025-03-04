@@ -34,6 +34,29 @@ This is a modified version of the original Faster Whisper Dictation tool that us
    echo GROQ_API_KEY=your_groq_api_key_here > %USERPROFILE%\.env
    ```
 
+3. (Optional) Set up automatic startup:
+
+   Run the setup script to configure the service to start automatically on system boot:
+
+   ```bash
+   ./setup.sh
+   ```
+
+   This will:
+
+   - On macOS: Create and load a LaunchAgent that starts the service on login
+   - On Linux Mint: Create and enable a systemd service that starts on boot
+
+   To check the service status:
+
+   - macOS: `launchctl list | grep com.user.dictation`
+   - Linux: `sudo systemctl status dictation.service`
+
+   To view logs:
+
+   - macOS: Check `/tmp/dictation.stdout.log` and `/tmp/dictation.stderr.log`
+   - Linux: Use `journalctl -u dictation.service`
+
 ## Usage
 
 Run the dictation tool:
@@ -83,3 +106,8 @@ This version uses the Groq API for transcription instead of running Whisper mode
 - If you get an error about the GROQ_API_KEY not being set, make sure you've set the environment variable correctly or added it to your `~/.env` file
 - If transcription fails, check your internet connection and Groq API key validity
 - Make sure your microphone permissions are properly set up for your operating system
+- If the startup service isn't working:
+  - Check the logs for error messages
+  - Ensure your Groq API key is properly set in `~/.env`
+  - Verify that the paths in the service configuration match your installation
+  - Try running `run.sh` manually to verify it works outside the service

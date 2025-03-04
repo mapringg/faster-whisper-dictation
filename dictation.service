@@ -1,0 +1,14 @@
+[Unit]
+Description=Dictation Service
+After=network.target
+
+[Service]
+Type=simple
+User=mapring
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+WorkingDirectory=/Users/mapring/Developer/faster-whisper-dictation
+ExecStart=/bin/bash /Users/mapring/Developer/faster-whisper-dictation/run.sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target 
