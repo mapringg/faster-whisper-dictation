@@ -42,20 +42,18 @@ This is a modified version of the original Faster Whisper Dictation tool that us
    ./setup.sh
    ```
 
-   This will:
+   This script automatically detects your operating system and configures the appropriate startup method:
 
-   - On macOS: Create and load a LaunchAgent that starts the service on login
-   - On Linux Mint: Create and enable a systemd service that starts on boot
+   **On macOS:**
 
-   To check the service status:
+   - Creates a LaunchAgent in `~/Library/LaunchAgents/`
+   - Loads the service to start immediately and on future logins
 
-   - macOS: `launchctl list | grep com.user.dictation`
-   - Linux: `sudo systemctl status dictation.service`
+   **On Linux (Debian/Linux Mint):**
 
-   To view logs:
-
-   - macOS: Check `/tmp/dictation.stdout.log` and `/tmp/dictation.stderr.log`
-   - Linux: Use `journalctl -u dictation.service`
+   - Creates a user systemd service in `~/.config/systemd/user/`
+   - Adds an autostart entry to ensure proper startup
+   - Enables and starts the service
 
 ## Usage
 
@@ -92,6 +90,84 @@ Or use the provided shell script (on macOS/Linux):
 4. The audio will be transcribed using the Groq API
 5. The transcribed text will be typed out at your cursor position
 
+## Service Management
+
+### Checking Service Status
+
+**On macOS:**
+
+```
+launchctl list | grep com.user.dictation
+```
+
+View logs at: `/tmp/dictation.stdout.log` and `/tmp/dictation.stderr.log`
+
+**On Linux:**
+
+```
+systemctl --user status dictation.service
+```
+
+View logs with: `journalctl --user -u dictation.service`
+
+### Managing the Service
+
+**On macOS:**
+
+```
+# Stop the service
+launchctl unload ~/Library/LaunchAgents/com.user.dictation.plist
+
+# Start the service
+launchctl load ~/Library/LaunchAgents/com.user.dictation.plist
+```
+
+**On Linux:**
+
+```
+# Start the service
+systemctl --user start dictation.service
+
+# Stop the service
+systemctl --user stop dictation.service
+
+# Restart the service
+systemctl --user restart dictation.service
+```
+
+### Reverting Setup
+
+If you need to remove the service completely, run:
+
+```
+./revert_setup.sh
+```
+
+This script will:
+
+**On macOS:**
+
+- Unload the LaunchAgent service
+- Remove the plist file from ~/Library/LaunchAgents/
+
+**On Linux:**
+
+- Stop and disable the user systemd service
+- Remove service files
+- Remove autostart entries
+- Clean up any system-level service files if they exist
+
+## Troubleshooting
+
+- **API Key Issues:** If you get an error about the GROQ_API_KEY not being set, make sure you've set the environment variable correctly or added it to your `~/.env` file
+- **Transcription Failures:** Check your internet connection and verify your Groq API key is valid
+- **Microphone Problems:** Ensure your microphone permissions are properly set up for your operating system
+- **Service Not Starting:**
+  - Check the logs for error messages
+  - Ensure your Groq API key is properly set in `~/.env`
+  - Verify that the paths in the service configuration match your installation
+  - Try running `run.sh` manually to verify it works outside the service
+
 ## Differences from Original Version
 
 This version uses the Groq API for transcription instead of running Whisper models locally. This means:
@@ -100,63 +176,3 @@ This version uses the Groq API for transcription instead of running Whisper mode
 2. You need a Groq API key
 3. Transcription may be faster or slower depending on your internet connection and Groq API response times
 4. All other functionality remains the same as the original version
-
-## Troubleshooting
-
-- If you get an error about the GROQ_API_KEY not being set, make sure you've set the environment variable correctly or added it to your `~/.env` file
-- If transcription fails, check your internet connection and Groq API key validity
-- Make sure your microphone permissions are properly set up for your operating system
-- If the startup service isn't working:
-  - Check the logs for error messages
-  - Ensure your Groq API key is properly set in `~/.env`
-  - Verify that the paths in the service configuration match your installation
-  - Try running `run.sh` manually to verify it works outside the service
-
-## Service Management
-
-### User Systemd Service (Linux)
-
-The application is set up to run as a user systemd service on Linux. This means:
-
-1. The service runs in your user context, not as root
-2. It has proper access to your X11 display
-3. It starts automatically when you log in
-
-#### Useful Commands
-
-- Check service status:
-
-  ```
-  systemctl --user status dictation.service
-  ```
-
-- View logs:
-
-  ```
-  journalctl --user -u dictation.service
-  ```
-
-- Manually restart the service:
-
-  ```
-  systemctl --user restart dictation.service
-  ```
-
-- Stop the service:
-  ```
-  systemctl --user stop dictation.service
-  ```
-
-### Reverting Setup
-
-If you need to revert the setup (remove all service files), run:
-
-```
-./revert_setup.sh
-```
-
-This will:
-
-- Stop and disable both user and system services
-- Remove service files
-- Remove autostart entries
