@@ -325,6 +325,7 @@ transitions = [
     {'trigger':'finish_recording'    ,'source': States.RECORDING    ,'dest': States.TRANSCRIBING },
     {'trigger':'finish_transcribing' ,'source': States.TRANSCRIBING ,'dest': States.REPLAYING    },
     {'trigger':'finish_replaying'    ,'source': States.REPLAYING    ,'dest': States.READY        },
+    {'trigger':'cancel_recording'    ,'source': States.RECORDING    ,'dest': States.READY        },
 ]
 
 
@@ -339,6 +340,7 @@ class App():
         self.replayer    = KeyboardReplayer(m.finish_replaying)
         self.timer = None
         self.language = args.language
+        self.escape_listener = None
 
         m.on_enter_RECORDING(self.recorder.start)
         m.on_enter_TRANSCRIBING(self.transcriber.transcribe)
@@ -348,7 +350,8 @@ class App():
         # https://freesound.org/people/MATRIXXX_/
         self.SOUND_EFFECTS = {
             "start_recording": loadwav("assets/granted-04.wav"),
-            "finish_recording": loadwav("assets/beepbeep.wav")
+            "finish_recording": loadwav("assets/beepbeep.wav"),
+            "cancel_recording": loadwav("assets/beepbeep.wav")  # Using same sound for now
         }
 
     def beep(self, k, wait=True):
@@ -363,6 +366,19 @@ class App():
             if self.args.max_time:
                 self.timer = threading.Timer(self.args.max_time, self.timer_stop)
                 self.timer.start()
+            
+            # Start escape key listener
+            def on_press(key):
+                if key == keyboard.Key.esc and self.m.is_RECORDING():
+                    self.cancel()
+                    return False  # Stop listener
+            
+            def on_release(key):
+                pass
+            
+            self.escape_listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+            self.escape_listener.start()
+            
             self.m.start_recording(language=self.language)
             return True
 
@@ -371,7 +387,23 @@ class App():
             self.recorder.stop()
             if self.timer is not None:
                 self.timer.cancel()
+            if self.escape_listener is not None:
+                self.escape_listener.stop()
+                self.escape_listener = None
             self.beep("finish_recording", wait=False)
+            return True
+
+    def cancel(self):
+        if self.m.is_RECORDING():
+            print('Recording cancelled.')
+            self.recorder.stop()
+            if self.timer is not None:
+                self.timer.cancel()
+            if self.escape_listener is not None:
+                self.escape_listener.stop()
+                self.escape_listener = None
+            self.beep("cancel_recording", wait=False)
+            self.m.cancel_recording()
             return True
 
     def timer_stop(self):
