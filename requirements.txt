@@ -1,10 +1,11 @@
-pynput==1.7.8
-pyaudio
-keyboard
+pyaudio>=0.2.13
+numpy>=1.24.0
+pynput>=1.7.6
+transitions>=0.9.0
+elevenlabs>=0.3.0
+soundfile>=0.12.1
+sounddevice>=0.4.6
+requests>=2.31.0
 argparse
-transitions
-numpy
-requests
-sounddevice; sys.platform != 'win32'
-soundfile
+keyboard
 wave 

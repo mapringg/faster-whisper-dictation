@@ -13,6 +13,8 @@ import tempfile
 from pynput import keyboard
 from transitions import Machine
 from pathlib import Path
+from elevenlabs.client import ElevenLabs
+from io import BytesIO
 
 if platform.system() == 'Windows':
     import winsound
@@ -58,32 +60,39 @@ def load_env_from_file(env_file_path):
     return True
 
 
-class GroqTranscriber:
-    def __init__(self, callback, model="whisper-large-v3-turbo"):
+class ElevenLabsTranscriber:
+    def __init__(self, callback, model="scribe_v1_base"):
         self.callback = callback
         self.model = model
         
         # Try to get API key from environment
-        self.api_key = os.environ.get("GROQ_API_KEY")
+        self.api_key = os.environ.get("ELEVENLABS_API_KEY")
         
         # If not found, try to load from ~/.env file
         if not self.api_key:
             env_file = os.path.join(str(Path.home()), '.env')
             if load_env_from_file(env_file):
-                self.api_key = os.environ.get("GROQ_API_KEY")
+                self.api_key = os.environ.get("ELEVENLABS_API_KEY")
         
         if not self.api_key:
-            raise ValueError("GROQ_API_KEY environment variable is not set. Please set it in your environment or in ~/.env file.")
+            raise ValueError("ELEVENLABS_API_KEY environment variable is not set. Please set it in your environment or in ~/.env file.")
+        
+        # Initialize ElevenLabs client
+        self.client = ElevenLabs(api_key=self.api_key)
         
     def transcribe(self, event):
-        print('Transcribing with Groq API...')
+        print('Transcribing with ElevenLabs API...')
         audio = event.kwargs.get('audio', None)
         language = None
         
         # Extract language from the audio callback parameters
         if 'language' in event.kwargs:
             language = event.kwargs['language']
-            print(f"Using language: {language}")
+            # Only use language if it's a non-empty string
+            if not language or not isinstance(language, str) or not language.strip():
+                language = None
+            else:
+                print(f"Using language: {language}")
             
         if audio is not None:
             # Save audio to a temporary WAV file
@@ -98,55 +107,34 @@ class GroqTranscriber:
                 wf.writeframes((audio * 32768).astype(np.int16).tobytes())
             
             try:
-                # Send the audio file to Groq API for transcription
-                headers = {
-                    "Authorization": f"Bearer {self.api_key}"
+                # Convert the audio file to BytesIO for ElevenLabs API
+                with open(temp_filename, 'rb') as audio_file:
+                    audio_data = BytesIO(audio_file.read())
+                
+                # Send the audio to ElevenLabs for transcription
+                api_params = {
+                    'file': audio_data,
+                    'model_id': self.model,
+                    'tag_audio_events': False,
+                    'diarize': False
                 }
                 
-                # Create a prompt for the Groq API to transcribe the audio
-                prompt = "Please transcribe the following audio accurately:"
+                # Only add language_code if a specific language is requested
+                if language:
+                    api_params['language_code'] = language
                 
-                # Prepare the API request
-                with open(temp_filename, 'rb') as audio_file:
-                    files = {
-                        'file': audio_file,
-                    }
-                    data = {
-                        'model': self.model,
-                        'prompt': prompt,
-                        'temperature': 0.0
-                    }
-                    
-                    # Add language parameter if specified
-                    if language:
-                        # Validate that language is a string and not an event object
-                        if isinstance(language, str):
-                            data['language'] = language
-                        else:
-                            print(f"Warning: Invalid language format: {language}, ignoring language parameter")
-                    
-                    # Make the API request to Groq
-                    response = requests.post(
-                        "https://api.groq.com/openai/v1/audio/transcriptions",
-                        headers=headers,
-                        files=files,
-                        data=data
-                    )
+                transcription = self.client.speech_to_text.convert(**api_params)
                 
-                if response.status_code == 200:
-                    result = response.json()
-                    text = result.get("text", "")
-                    
-                    # Create a simple segment object to match the Whisper format
+                if transcription and hasattr(transcription, 'text'):
+                    # Create a simple segment object to match the expected format
                     class Segment:
                         def __init__(self, text):
                             self.text = text
                     
-                    segments = [Segment(text)]
+                    segments = [Segment(transcription.text)]
                     self.callback(segments=segments)
                 else:
-                    print(f"Error from Groq API: {response.status_code}")
-                    print(response.text)
+                    print("Error: No transcription result")
                     self.callback(segments=[])
             
             except Exception as e:
@@ -272,11 +260,11 @@ class DoubleKeyListener():
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Dictation app powered by Groq API')
-    parser.add_argument('-m', '--model-name', type=str, default='whisper-large-v3-turbo',
+    parser = argparse.ArgumentParser(description='Dictation app powered by ElevenLabs API')
+    parser.add_argument('-m', '--model-name', type=str, default='scribe_v1_base',
                         help='''\
-Groq model to use for transcription.
-Default: whisper-large-v3-turbo.''')
+ElevenLabs model to use for transcription.
+Default: scribe_v1_base. Available models: scribe_v1_base, scribe_v1_base_base''')
     parser.add_argument('-k', '--key-combo', type=str,
                         help='''\
 Specify the key combination to toggle the app.
@@ -303,11 +291,8 @@ The app will automatically stop recording after this duration.
 Default: 30 seconds.''')
     parser.add_argument('-l', '--language', type=str, default=None,
                         help='''\
-Specify the language of the audio for better transcription accuracy.
-If not specified, Groq will auto-detect the language.
-Example: 'en' for English, 'fr' for French, etc.
-
-Supported languages: af, am, ar, as, az, ba, be, bg, bn, bo, br, bs, ca, cs, cy, da, de, el, en, es, et, eu, fa, fi, fo, fr, gl, gu, ha, haw, he, hi, hr, ht, hu, hy, id, is, it, ja, jv, ka, kk, km, kn, ko, la, lb, ln, lo, lt, lv, mg, mi, mk, ml, mn, mr, ms, mt, my, ne, nl, nn, no, oc, pa, pl, ps, pt, ro, ru, sa, sd, si, sk, sl, sn, so, sq, sr, su, sv, sw, ta, te, tg, th, tl, tr, tt, uk, ur, uz, vi, yi, yo, yue, zh''')
+Specify the language code for transcription (e.g., 'eng' for English).
+If not specified, ElevenLabs will auto-detect the language.''')
 
     args = parser.parse_args()
     return args
@@ -335,10 +320,11 @@ class App():
         self.m = m
         self.args = args
         self.recorder    = Recorder(m.finish_recording)
-        self.transcriber = GroqTranscriber(m.finish_transcribing, args.model_name)
+        self.transcriber = ElevenLabsTranscriber(m.finish_transcribing, args.model_name)
         self.replayer    = KeyboardReplayer(m.finish_replaying)
         self.timer = None
-        self.language = args.language
+        # Validate language parameter - if empty string, set to None
+        self.language = args.language if args.language and args.language.strip() else None
 
         m.on_enter_RECORDING(self.recorder.start)
         m.on_enter_TRANSCRIBING(self.transcriber.transcribe)

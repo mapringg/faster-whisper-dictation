@@ -1,178 +1,121 @@
-# Faster Whisper Dictation with Groq API
+# Faster Dictation with ElevenLabs
 
-This is a modified version of the original Faster Whisper Dictation tool that uses the Groq API for speech transcription instead of local Whisper models.
+A simple dictation app powered by ElevenLabs Speech-to-Text API. This app allows you to dictate text anywhere on your computer by using global keyboard shortcuts.
 
-## Setup
+## Features
 
-1. Install the required dependencies:
+- Real-time speech-to-text using ElevenLabs' advanced models
+- Global keyboard shortcuts for easy recording control
+- Automatic text typing after transcription
+- Support for multiple languages (English by default)
+- Configurable maximum recording time
+- Audio feedback for recording start/stop
 
-   ```
-   pip install -r requirements.txt
-   ```
+## Prerequisites
 
-2. Set up your Groq API key in one of the following ways:
+- Python 3.7 or higher
+- An ElevenLabs API key (get one at https://elevenlabs.io)
+- PyAudio dependencies (see installation section)
+- For Linux/macOS: ALSA/PortAudio development files
 
-   **Option 1:** Set as an environment variable:
+## Installation
 
-   ```
-   export GROQ_API_KEY="your_groq_api_key_here"
-   ```
+1. Clone this repository:
 
-   On Windows, use:
+```bash
+git clone https://github.com/yourusername/faster-whisper-dictation.git
+cd faster-whisper-dictation
+```
 
-   ```
-   set GROQ_API_KEY=your_groq_api_key_here
-   ```
+2. Install system dependencies:
 
-   **Option 2:** Create a `.env` file in your home directory:
+For Ubuntu/Debian:
 
-   ```
-   # On macOS/Linux
-   echo "GROQ_API_KEY=your_groq_api_key_here" > ~/.env
+```bash
+sudo apt-get install python3-dev portaudio19-dev
+```
 
-   # On Windows
-   echo GROQ_API_KEY=your_groq_api_key_here > %USERPROFILE%\.env
-   ```
+For macOS:
 
-3. (Optional) Set up automatic startup:
+```bash
+brew install portaudio
+```
 
-   Run the setup script to configure the service to start automatically on system boot:
+3. Install Python dependencies:
 
-   ```bash
-   ./setup.sh
-   ```
+```bash
+pip install -r requirements.txt
+```
 
-   This script automatically detects your operating system and configures the appropriate startup method:
+4. Set up your ElevenLabs API key:
+   Create a `.env` file in your home directory:
 
-   **On macOS:**
-
-   - Creates a LaunchAgent in `~/Library/LaunchAgents/`
-   - Loads the service to start immediately and on future logins
-
-   **On Linux (Debian/Linux Mint):**
-
-   - Creates a user systemd service in `~/.config/systemd/user/`
-   - Adds an autostart entry to ensure proper startup
-   - Enables and starts the service
+```bash
+echo "ELEVENLABS_API_KEY=your_api_key_here" >> ~/.env
+```
 
 ## Usage
 
-Run the dictation tool:
+1. Basic usage:
 
-```
+```bash
 python dictation.py
 ```
 
-Or use the provided shell script (on macOS/Linux):
+2. With custom options:
 
+```bash
+python dictation.py -t 60  # Set max recording time to 60 seconds
+python dictation.py -l fra  # Use French language
+python dictation.py -m scribe_v1_base_base  # Use base model for faster processing
 ```
-./run.sh
-```
+
+### Keyboard Controls
+
+- **Windows**: Press `Win + Z` to start/stop recording
+- **macOS/Linux**: Double-tap `Left Alt` to start recording, tap once to stop
+  - You can change the key combination using the `-k` or `-d` options
 
 ### Command Line Options
 
-- `-m, --model-name`: Specify the Groq model to use (default: "whisper-large-v3-turbo")
-- `-k, --key-combo`: Specify the key combination to toggle recording
-- `-d, --double-key`: Specify a key for double-tap activation
+- `-m, --model-name`: ElevenLabs model to use (default: scribe_v1_base)
+- `-k, --key-combo`: Custom key combination for toggle
+- `-d, --double-key`: Custom key for double-tap activation
 - `-t, --max-time`: Maximum recording time in seconds (default: 30)
-- `-l, --language`: Specify the language for better transcription accuracy
+- `-l, --language`: Language code (default: eng)
 
-### Default Key Combinations
+### Available Models
 
-- Windows: Win+Z
-- macOS/Linux: Double-tap Left Alt
+- `scribe_v1_base`: High-quality transcription (default)
+- `scribe_v1_base_base`: Faster, lighter model
 
-## How It Works
+### Language Support
 
-1. Press the hotkey to start recording
-2. Speak into your microphone
-3. Press the hotkey again to stop recording
-4. The audio will be transcribed using the Groq API
-5. The transcribed text will be typed out at your cursor position
+The default language is English ('eng'). You can specify other languages using their language codes, for example:
 
-## Service Management
-
-### Checking Service Status
-
-**On macOS:**
-
-```
-launchctl list | grep com.user.dictation
-```
-
-View logs at: `/tmp/dictation.stdout.log` and `/tmp/dictation.stderr.log`
-
-**On Linux:**
-
-```
-systemctl --user status dictation.service
-```
-
-View logs with: `journalctl --user -u dictation.service`
-
-### Managing the Service
-
-**On macOS:**
-
-```
-# Stop the service
-launchctl unload ~/Library/LaunchAgents/com.user.dictation.plist
-
-# Start the service
-launchctl load ~/Library/LaunchAgents/com.user.dictation.plist
-```
-
-**On Linux:**
-
-```
-# Start the service
-systemctl --user start dictation.service
-
-# Stop the service
-systemctl --user stop dictation.service
-
-# Restart the service
-systemctl --user restart dictation.service
-```
-
-### Reverting Setup
-
-If you need to remove the service completely, run:
-
-```
-./revert_setup.sh
-```
-
-This script will:
-
-**On macOS:**
-
-- Unload the LaunchAgent service
-- Remove the plist file from ~/Library/LaunchAgents/
-
-**On Linux:**
-
-- Stop and disable the user systemd service
-- Remove service files
-- Remove autostart entries
-- Clean up any system-level service files if they exist
+- eng: English (default)
+- fra: French
+- deu: German
+- spa: Spanish
+- ita: Italian
 
 ## Troubleshooting
 
-- **API Key Issues:** If you get an error about the GROQ_API_KEY not being set, make sure you've set the environment variable correctly or added it to your `~/.env` file
-- **Transcription Failures:** Check your internet connection and verify your Groq API key is valid
-- **Microphone Problems:** Ensure your microphone permissions are properly set up for your operating system
-- **Service Not Starting:**
-  - Check the logs for error messages
-  - Ensure your Groq API key is properly set in `~/.env`
-  - Verify that the paths in the service configuration match your installation
-  - Try running `run.sh` manually to verify it works outside the service
+1. If you get PortAudio errors:
 
-## Differences from Original Version
+   - Make sure you have installed the system dependencies
+   - Try reinstalling PyAudio: `pip uninstall pyaudio && pip install pyaudio`
 
-This version uses the Groq API for transcription instead of running Whisper models locally. This means:
+2. If the app can't find your API key:
+   - Ensure your `.env` file is in your home directory
+   - Check that the API key is correctly formatted
+   - Try setting it directly in your environment: `export ELEVENLABS_API_KEY=your_key_here`
 
-1. You need an internet connection
-2. You need a Groq API key
-3. Transcription may be faster or slower depending on your internet connection and Groq API response times
-4. All other functionality remains the same as the original version
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- ElevenLabs for their excellent Speech-to-Text API
+- Sound effects from freesound.org users leviclaassen and MATRIXXX\_
