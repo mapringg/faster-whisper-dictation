@@ -25,15 +25,23 @@ if platform.system() == 'Windows':
         return data            
 else:
     import soundfile as sf
-    import sounddevice # or pygame.mixer, py-simple-audio
-    sounddevice.default.samplerate = 44100
+    import sounddevice as sd
+    
+    # Use system default audio configuration
+    sd.default.samplerate = 44100
+    sd.default.channels = 2  # Use stereo output
+    
     def playsound(s, wait=True):
-        sounddevice.play(s) # samplerate=16000
+        # Ensure audio data is in the correct format for playback
+        if len(s.shape) == 1:  # If mono, convert to stereo
+            s = np.column_stack((s, s))
+        sd.play(s, blocking=wait)
         if wait:
-            sounddevice.wait()
+            sd.wait()
+            
     def loadwav(filename):
         data, fs = sf.read(filename, dtype='float32')
-        return data            
+        return data
 
 
 def load_env_from_file(env_file_path):
