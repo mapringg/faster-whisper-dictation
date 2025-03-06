@@ -339,7 +339,7 @@ class App():
         # https://freesound.org/people/leviclaassen/sounds/107786/
         # https://freesound.org/people/MATRIXXX_/
         self.SOUND_EFFECTS = {
-            "start_recording": loadwav("assets/granted-04.wav"),
+            "start_recording": loadwav("assets/beepbeep.wav"),
             "finish_recording": loadwav("assets/beepbeep.wav")
         }
 
