@@ -2,58 +2,98 @@ import enum
 import time
 import threading
 import argparse
-import platform
-import pyaudio
-import numpy as np
 import os
 import requests
 import json
-import wave
 import tempfile
+import logging
 from pynput import keyboard
 from transitions import Machine
 from pathlib import Path
+import soundfile as sf
+import sounddevice as sd
+import numpy as np
 
-if platform.system() == 'Windows':
-    import winsound
-    def playsound(s, wait=True):
-        # SND_ASYNC winsound cannot play asynchronously from memory
-        winsound.PlaySound(s, winsound.SND_MEMORY)
-    def loadwav(filename):
-        with open(filename, "rb") as f:
-            data = f.read()
-        return data            
-else:
-    import soundfile as sf
-    import sounddevice # or pygame.mixer, py-simple-audio
-    sounddevice.default.samplerate = 44100
-    def playsound(s, wait=True):
-        sounddevice.play(s) # samplerate=16000
-        if wait:
-            sounddevice.wait()
-    def loadwav(filename):
-        data, fs = sf.read(filename, dtype='float32')
-        return data            
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('/tmp/dictation.log')
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Configure sounddevice defaults
+sd.default.samplerate = 44100
+sd.default.channels = 1
+
+def get_default_devices():
+    """Get the current default input and output devices."""
+    try:
+        devices = sd.query_devices()
+        default_input = sd.default.device[0]
+        default_output = sd.default.device[1]
+        
+        input_info = devices[default_input] if default_input is not None else None
+        output_info = devices[default_output] if default_output is not None else None
+        
+        logger.info(f"Default input device: {input_info['name'] if input_info else 'None'}")
+        logger.info(f"Default output device: {output_info['name'] if output_info else 'None'}")
+        
+        return default_input, default_output
+    except Exception as e:
+        logger.error(f"Error getting default devices: {str(e)}")
+        return None, None
+
+def playsound(data, wait=True):
+    """Play audio data through the default output device."""
+    try:
+        _, output_device = get_default_devices()
+        if output_device is not None:
+            sd.play(data, device=output_device)
+            if wait:
+                sd.wait()
+        else:
+            logger.error("No default output device available")
+    except Exception as e:
+        logger.error(f"Error playing sound: {str(e)}")
+
+def loadwav(filename):
+    """Load a WAV file as float32 data."""
+    try:
+        data, _ = sf.read(filename, dtype='float32')
+        return data
+    except Exception as e:
+        logger.error(f"Error loading WAV file {filename}: {str(e)}")
+        return None
 
 
 def load_env_from_file(env_file_path):
     """Load environment variables from a file."""
-    if not os.path.exists(env_file_path):
+    try:
+        if not os.path.exists(env_file_path):
+            return False
+        
+        with open(env_file_path, 'r') as file:
+            for line in file:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    key, value = line.split('=', 1)
+                    os.environ[key.strip()] = value.strip()
+        return True
+    except Exception as e:
+        logger.error(f"Error loading environment file {env_file_path}: {str(e)}")
         return False
-    
-    with open(env_file_path, 'r') as file:
-        for line in file:
-            line = line.strip()
-            if line and not line.startswith('#'):
-                key, value = line.split('=', 1)
-                os.environ[key.strip()] = value.strip()
-    return True
 
 
 class GroqTranscriber:
     def __init__(self, callback, model="whisper-large-v3-turbo"):
         self.callback = callback
         self.model = model
+        self.max_retries = 3
+        self.retry_delay = 1  # Initial delay in seconds
         
         # Try to get API key from environment
         self.api_key = os.environ.get("GROQ_API_KEY")
@@ -67,150 +107,188 @@ class GroqTranscriber:
         if not self.api_key:
             raise ValueError("GROQ_API_KEY environment variable is not set. Please set it in your environment or in ~/.env file.")
         
-    def transcribe(self, event):
-        print('Transcribing with Groq API...')
-        audio = event.kwargs.get('audio', None)
-        language = None
+    def save_audio_to_wav(self, audio_data, filename):
+        """Save audio data to a WAV file."""
+        try:
+            sf.write(filename, audio_data, 16000, format='WAV', subtype='PCM_16')
+            return True
+        except Exception as e:
+            logger.error(f"Error saving audio to WAV: {str(e)}")
+            return False
+
+    def make_api_request(self, temp_filename, language=None):
+        """Make API request with retry mechanism."""
+        headers = {"Authorization": f"Bearer {self.api_key}"}
         
-        # Extract language from the audio callback parameters
-        if 'language' in event.kwargs:
-            language = event.kwargs['language']
-            print(f"Using language: {language}")
-            
-        if audio is not None:
-            # Save audio to a temporary WAV file
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-                temp_filename = temp_file.name
-                
-            # Convert numpy array to WAV file
-            with wave.open(temp_filename, 'wb') as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)  # 16-bit
-                wf.setframerate(16000)
-                wf.writeframes((audio * 32768).astype(np.int16).tobytes())
-            
+        for attempt in range(self.max_retries):
             try:
-                # Send the audio file to Groq API for transcription
-                headers = {
-                    "Authorization": f"Bearer {self.api_key}"
-                }
-                
-                # Create a prompt for the Groq API to transcribe the audio
-                prompt = "Please transcribe the following audio accurately:"
-                
-                # Prepare the API request
                 with open(temp_filename, 'rb') as audio_file:
-                    files = {
-                        'file': audio_file,
-                    }
+                    files = {'file': audio_file}
                     data = {
                         'model': self.model,
-                        'prompt': prompt,
                         'temperature': 0.0
                     }
                     
-                    # Add language parameter if specified
-                    if language:
-                        # Validate that language is a string and not an event object
-                        if isinstance(language, str):
-                            data['language'] = language
-                        else:
-                            print(f"Warning: Invalid language format: {language}, ignoring language parameter")
+                    if language and isinstance(language, str):
+                        data['language'] = language
+                        logger.info(f"Using language: {language}")
                     
-                    # Make the API request to Groq
                     response = requests.post(
                         "https://api.groq.com/openai/v1/audio/transcriptions",
                         headers=headers,
                         files=files,
-                        data=data
+                        data=data,
+                        timeout=30  # Add timeout
                     )
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    text = result.get("text", "")
                     
-                    # Create a simple segment object to match the Whisper format
-                    class Segment:
-                        def __init__(self, text):
-                            self.text = text
-                    
-                    segments = [Segment(text)]
-                    self.callback(segments=segments)
-                else:
-                    print(f"Error from Groq API: {response.status_code}")
-                    print(response.text)
-                    self.callback(segments=[])
-            
-            except Exception as e:
-                print(f"Error during transcription: {str(e)}")
-                self.callback(segments=[])
-            
-            finally:
-                # Clean up the temporary file
-                try:
-                    os.unlink(temp_filename)
-                except:
-                    pass
-        else:
+                    if response.status_code == 200:
+                        return response.json()
+                    elif response.status_code == 429:  # Rate limit
+                        retry_after = int(response.headers.get('Retry-After', self.retry_delay))
+                        logger.warning(f"Rate limited. Waiting {retry_after} seconds...")
+                        time.sleep(retry_after)
+                    else:
+                        logger.error(f"API error: {response.status_code} - {response.text}")
+                        if attempt < self.max_retries - 1:
+                            wait_time = self.retry_delay * (2 ** attempt)  # Exponential backoff
+                            logger.info(f"Retrying in {wait_time} seconds...")
+                            time.sleep(wait_time)
+                        
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Network error: {str(e)}")
+                if attempt < self.max_retries - 1:
+                    wait_time = self.retry_delay * (2 ** attempt)
+                    logger.info(f"Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+        
+        return None
+
+    def transcribe(self, event):
+        logger.info('Starting transcription with Groq API...')
+        audio = event.kwargs.get('audio', None)
+        language = event.kwargs.get('language')
+        
+        if audio is None:
+            logger.warning("No audio data provided")
             self.callback(segments=[])
+            return
+            
+        # Save audio to a temporary WAV file
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+            temp_filename = temp_file.name
+            
+        try:
+            if not self.save_audio_to_wav(audio, temp_filename):
+                self.callback(segments=[])
+                return
+                
+            result = self.make_api_request(temp_filename, language)
+            
+            if result:
+                text = result.get("text", "")
+                logger.info("Transcription successful")
+                
+                # Create a simple segment object to match the Whisper format
+                class Segment:
+                    def __init__(self, text):
+                        self.text = text
+                
+                segments = [Segment(text)]
+                self.callback(segments=segments)
+            else:
+                logger.error("Failed to get transcription after retries")
+                self.callback(segments=[])
+        
+        except Exception as e:
+            logger.error(f"Error during transcription: {str(e)}")
+            self.callback(segments=[])
+        
+        finally:
+            # Clean up the temporary file
+            try:
+                os.unlink(temp_filename)
+            except Exception as e:
+                logger.error(f"Error deleting temporary file: {str(e)}")
 
 
 class Recorder:
     def __init__(self, callback):
         self.callback = callback
         self.recording = False
+        self.stream = None
+        self.frames = []
 
     def start(self, event):
-        print('Recording ...')
-        # Extract language from event if it exists, otherwise use None
-        language = None
-        if hasattr(event, 'kwargs') and 'language' in event.kwargs:
-            language = event.kwargs['language']
+        logger.info('Starting recording...')
+        language = event.kwargs.get('language') if hasattr(event, 'kwargs') else None
         thread = threading.Thread(target=self._record_impl, args=(language,))
         thread.start()
 
     def stop(self):
-        print('Done recording.')
+        logger.info('Stopping recording...')
         self.recording = False
+        if self.stream is not None:
+            try:
+                self.stream.stop()
+                self.stream.close()
+            except Exception as e:
+                logger.error(f"Error stopping stream: {str(e)}")
 
     def _record_impl(self, language=None):
-        self.recording = True
+        try:
+            self.recording = True
+            self.frames = []
+            
+            # Get default input device
+            input_device, _ = get_default_devices()
+            if input_device is None:
+                raise RuntimeError("No default input device available")
 
-        frames_per_buffer = 1024
-        p = pyaudio.PyAudio()
-        stream = p.open(format            = pyaudio.paInt16,
-                        channels          = 1,
-                        rate              = 16000,
-                        frames_per_buffer = frames_per_buffer,
-                        input             = True)
-        frames = []
+            def callback(indata, frames, time, status):
+                if status:
+                    logger.warning(f"Stream callback status: {status}")
+                if self.recording:
+                    self.frames.append(indata.copy())
 
-        while self.recording:
-            data = stream.read(frames_per_buffer)
-            frames.append(data)
+            # Open the input stream
+            self.stream = sd.InputStream(
+                device=input_device,
+                channels=1,
+                samplerate=16000,
+                callback=callback,
+                dtype=np.float32
+            )
+            
+            with self.stream:
+                while self.recording:
+                    sd.sleep(100)  # Sleep to prevent busy-waiting
 
-        stream.stop_stream()
-        stream.close()
-        p.terminate()
-
-        audio_data = np.frombuffer(b''.join(frames), dtype=np.int16)
-        audio_data_fp32 = audio_data.astype(np.float32) / 32768.0
-
-        # Pass language parameter to callback if it's a valid string
-        if language and isinstance(language, str):
-            print(f"Passing language to transcriber: {language}")
-            self.callback(audio=audio_data_fp32, language=language)
-        else:
-            self.callback(audio=audio_data_fp32)
+            # Combine all frames
+            if self.frames:
+                audio_data = np.concatenate(self.frames, axis=0)
+                if language and isinstance(language, str):
+                    logger.info(f"Passing language to transcriber: {language}")
+                    self.callback(audio=audio_data, language=language)
+                else:
+                    self.callback(audio=audio_data)
+            else:
+                logger.warning("No audio data recorded")
+                
+        except Exception as e:
+            logger.error(f"Error during recording: {str(e)}")
+            self.recording = False
 
 
 class KeyboardReplayer():
     def __init__(self, callback):
         self.callback = callback
         self.kb = keyboard.Controller()
+        
     def replay(self, event):
-        print('Typing transcribed words...')
+        logger.info('Typing transcribed words...')
         segments = event.kwargs.get('segments', [])
+        text_buffer = []
+        
         for segment in segments:
             is_first = True
             for element in segment.text:
@@ -218,12 +296,17 @@ class KeyboardReplayer():
                     is_first = False
                     continue
                 try:
-                    print(element, end='')
+                    text_buffer.append(element)
                     self.kb.type(element)
                     time.sleep(0.0025)
-                except:
-                    pass
-        print('')
+                except Exception as e:
+                    logger.error(f"Error typing character '{element}': {str(e)}")
+        
+        if text_buffer:
+            logger.info(f"Typed text: {''.join(text_buffer)}")
+        else:
+            logger.warning("No text was typed")
+            
         self.callback()
 
 
@@ -367,7 +450,7 @@ class App():
             return True
 
     def timer_stop(self):
-        print('Timer stop')
+        logger.info('Timer stop')
         self.stop()
 
     def toggle(self):
@@ -378,21 +461,23 @@ class App():
             k = keyseqs.replace('<win>', '<cmd>').replace('<win_r>', '<cmd_r>').replace('<win_l>', '<cmd_l>').replace('<super>', '<cmd>').replace('<super_r>', '<cmd_r>').replace('<super_l>', '<cmd_l>')
             if parse:
                 k = keyboard.HotKey.parse(k)[0]
-            print('Using key:', k)
+            logger.info(f'Using key: {k}')
             return k
 
+        # Re-import platform here since we need it for OS detection
+        import platform
         if (platform.system() != 'Windows' and not self.args.key_combo) or self.args.double_key:
             key = self.args.double_key or '<alt_l>'
-            keylistener= DoubleKeyListener(self.start, self.stop, normalize_key_names(key, parse=True))
-            self.m.on_enter_READY(lambda *_: print("Double tap ", key, " to start recording. Tap again to stop recording"))
+            keylistener = DoubleKeyListener(self.start, self.stop, normalize_key_names(key, parse=True))
+            self.m.on_enter_READY(lambda *_: logger.info(f"Double tap {key} to start recording. Tap again to stop recording"))
         else:
             key = self.args.key_combo or '<win>+z'
-            keylistener= KeyListener(self.toggle, normalize_key_names(key))
-            self.m.on_enter_READY(lambda *_: print("Press ", key, " to start/stop recording."))
+            keylistener = KeyListener(self.toggle, normalize_key_names(key))
+            self.m.on_enter_READY(lambda *_: logger.info(f"Press {key} to start/stop recording"))
         self.m.to_READY()
         keylistener.run()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    App(args).run() 
+    App(args).run()
