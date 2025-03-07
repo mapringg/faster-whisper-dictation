@@ -419,11 +419,12 @@ class App():
         m.on_enter_TRANSCRIBING(self.transcriber.transcribe)
         m.on_enter_REPLAYING(self.replayer.replay)
 
-        # https://freesound.org/people/leviclaassen/sounds/107786/
-        # https://freesound.org/people/MATRIXXX_/
+        # Sound effects attribution:
+        # start_recording: https://freesound.org/people/MATRIXXX_/sounds/523763/ (CC-BY)
+        # finish_recording: https://freesound.org/people/MATRIXXX_/sounds/705952/ (CC-BY)
         self.SOUND_EFFECTS = {
-            "start_recording": loadwav("assets/beepbeep.wav"),
-            "finish_recording": loadwav("assets/beepbeep.wav")
+            "start_recording": loadwav("assets/523763__matrixxx__select-granted-06.wav"),
+            "finish_recording": loadwav("assets/705952__matrixxx__ai-technology.wav")
         }
 
     def beep(self, k, wait=True):
