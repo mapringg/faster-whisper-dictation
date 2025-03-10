@@ -6,7 +6,10 @@ A lightweight dictation service that uses Groq's API for fast and accurate speec
 
 - Python 3.8 or higher
 - Linux (Debian/Ubuntu/Mint) or macOS
-- A Groq API key (get one from [Groq's website](https://console.groq.com))
+- PortAudio (required for audio input)
+  - macOS: `brew install portaudio`
+  - Debian/Ubuntu/Mint: `sudo apt-get install portaudio19-dev`
+- Python packages: faster-whisper, sounddevice, soundfile, pynput, transitions, requests, numpy
 
 ## Installation
 
@@ -17,13 +20,7 @@ A lightweight dictation service that uses Groq's API for fast and accurate speec
    cd faster-whisper-dictation
    ```
 
-2. Create a `.env` file in your home directory with your Groq API key:
-
-   ```bash
-   echo "GROQ_API_KEY=your_api_key_here" > ~/.env
-   ```
-
-3. Run the setup script:
+2. Run the setup script:
    ```bash
    ./setup.sh
    ```
@@ -67,7 +64,7 @@ launchctl unload ~/Library/LaunchAgents/com.user.dictation.plist
 
 ## Service Management
 
-### Linux
+### Linux (systemd)
 
 ```bash
 # Check service status
@@ -79,6 +76,10 @@ journalctl --user -u dictation.service
 # Restart service
 systemctl --user restart dictation.service
 ```
+
+### Linux (Desktop Environments)
+
+For desktop environments like GNOME, KDE, or XFCE, the application will automatically start on login using the `dictation-autostart.desktop` file.
 
 ### macOS
 
@@ -94,6 +95,15 @@ cat /tmp/dictation.stderr.log
 launchctl unload ~/Library/LaunchAgents/com.user.dictation.plist
 launchctl load ~/Library/LaunchAgents/com.user.dictation.plist
 ```
+
+## Code Structure
+
+The project is organized as follows:
+
+- `src/`: Contains the main application code
+  - `cli.py`: Handles command-line argument parsing
+  - `core/`: Contains the core application logic
+  - `services/`: Contains modules for input handling, recording, and transcription
 
 ## Troubleshooting
 
