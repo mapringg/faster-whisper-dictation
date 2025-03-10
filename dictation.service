@@ -1,15 +1,18 @@
 [Unit]
 Description=Dictation Service
-After=graphical-session.target
+After=graphical-session.target pulseaudio.service
 PartOf=graphical-session.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 WorkingDirectory=%h/Developer/faster-whisper-dictation
 ExecStart=/bin/bash %h/Developer/faster-whisper-dictation/run.sh
-Restart=always
-RestartSec=5
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=30
 
 [Install]
 WantedBy=graphical-session.target 

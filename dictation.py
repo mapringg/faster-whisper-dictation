@@ -352,25 +352,12 @@ def parse_args():
                         help='''\
 Groq model to use for transcription.
 Default: whisper-large-v3-turbo.''')
-    parser.add_argument('-k', '--key-combo', type=str,
+    parser.add_argument('-d', '--trigger-key', type=str, default='<alt_l>',
                         help='''\
-Specify the key combination to toggle the app.
+Key to use for triggering recording. Double tap to start, single tap to stop.
+Default: Left Alt (<alt_l>)
 
-See https://pynput.readthedocs.io/en/latest/keyboard.html#pynput.keyboard.Key for a list of keys supported.
-
-Examples: <cmd_l>+<alt>+x , <ctrl>+<alt>+a. Note on windows, the winkey is specified using <cmd>.
-
-Default: <win>+z on Windows (see below for MacOS and Linux defaults).''')
-    parser.add_argument('-d', '--double-key', type=str,
-                        help='''\
-If key-combo is not set, on macOS/linux the default behavior is double tapping a key to start recording.
-Tap the same key again to stop recording.
-
-On MacOS and on Linux the default key is Left Alt
-
-You can set to a different key for double triggering.
-
-''')
+See https://pynput.readthedocs.io/en/latest/keyboard.html#pynput.keyboard.Key for supported keys.''')
     parser.add_argument('-t', '--max-time', type=int, default=30,
                         help='''\
 Specify the maximum recording time in seconds.
@@ -409,9 +396,9 @@ class App():
 
         self.m = m
         self.args = args
-        self.recorder    = Recorder(m.finish_recording)
+        self.recorder = Recorder(m.finish_recording)
         self.transcriber = GroqTranscriber(m.finish_transcribing, args.model_name)
-        self.replayer    = KeyboardReplayer(m.finish_replaying)
+        self.replayer = KeyboardReplayer(m.finish_replaying)
         self.timer = None
         self.language = args.language
 
@@ -428,9 +415,6 @@ class App():
         }
 
     def beep(self, k, wait=True):
-        # wait=True will block until the beeping sound finished playing before continue to start recording
-        # just in case if the beep sound interfere with voice recording
-        # when done recording, we don't want to block while continuing to transcribe while beeping async
         playsound(self.SOUND_EFFECTS[k], wait=wait)
 
     def start(self):
@@ -454,27 +438,17 @@ class App():
         logger.info('Timer stop')
         self.stop()
 
-    def toggle(self):
-        return self.start() or self.stop()
-
     def run(self):
-        def normalize_key_names(keyseqs, parse=False):
-            k = keyseqs.replace('<win>', '<cmd>').replace('<win_r>', '<cmd_r>').replace('<win_l>', '<cmd_l>').replace('<super>', '<cmd>').replace('<super_r>', '<cmd_r>').replace('<super_l>', '<cmd_l>')
-            if parse:
-                k = keyboard.HotKey.parse(k)[0]
-            logger.info(f'Using key: {k}')
-            return k
+        def normalize_key(key):
+            key = key.replace('<win>', '<cmd>').replace('<super>', '<cmd>')
+            key = keyboard.HotKey.parse(key)[0]
+            logger.info(f'Using trigger key: {key}')
+            return key
 
-        # Re-import platform here since we need it for OS detection
-        import platform
-        if (platform.system() != 'Windows' and not self.args.key_combo) or self.args.double_key:
-            key = self.args.double_key or '<alt_l>'
-            keylistener = DoubleKeyListener(self.start, self.stop, normalize_key_names(key, parse=True))
-            self.m.on_enter_READY(lambda *_: logger.info(f"Double tap {key} to start recording. Tap again to stop recording"))
-        else:
-            key = self.args.key_combo or '<win>+z'
-            keylistener = KeyListener(self.toggle, normalize_key_names(key))
-            self.m.on_enter_READY(lambda *_: logger.info(f"Press {key} to start/stop recording"))
+        trigger_key = normalize_key(self.args.trigger_key)
+        keylistener = DoubleKeyListener(self.start, self.stop, trigger_key)
+        
+        self.m.on_enter_READY(lambda *_: logger.info(f"Double tap {self.args.trigger_key} to start recording. Tap once to stop recording"))
         self.m.to_READY()
         keylistener.run()
 

@@ -1,12 +1,41 @@
 #!/bin/bash
 
-# Make run.sh executable
-chmod +x run.sh
-chmod +x restart_dictation.sh
+set -e  # Exit on error
 
-# Detect OS
+# Function to log messages
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+# Check if we're in the correct directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Make scripts executable
+log "Making scripts executable"
+chmod +x run.sh restart_dictation.sh
+
+# Check for Python 3
+if ! command -v python3 &>/dev/null; then
+    log "Error: Python 3 is required but not installed"
+    exit 1
+fi
+
+# Create virtual environment if it doesn't exist
+if [ ! -d "venv" ]; then
+    log "Creating virtual environment"
+    python3 -m venv venv
+fi
+
+# Activate virtual environment and install requirements
+log "Activating virtual environment and installing requirements"
+source venv/bin/activate
+pip install --upgrade pip
+pip install sounddevice soundfile pynput transitions requests numpy
+
+# Detect OS and set up service
 if [[ "$OSTYPE" == "darwin"* ]]; then
-    echo "Setting up for macOS..."
+    log "Setting up for macOS..."
     
     # Create LaunchAgents directory if it doesn't exist
     mkdir -p ~/Library/LaunchAgents
@@ -15,42 +44,53 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     cp com.user.dictation.plist ~/Library/LaunchAgents/
     
     # Load the service
-    launchctl unload ~/Library/LaunchAgents/com.user.dictation.plist 2>/dev/null
+    log "Loading launchd service"
+    launchctl unload ~/Library/LaunchAgents/com.user.dictation.plist 2>/dev/null || true
     launchctl load ~/Library/LaunchAgents/com.user.dictation.plist
     
-    echo "macOS setup complete! The service will start automatically on login."
-    echo "To check status: launchctl list | grep com.user.dictation"
-    echo "Logs are available at: /tmp/dictation.stdout.log and /tmp/dictation.stderr.log"
+    log "macOS setup complete!"
+    log "To check status: launchctl list | grep com.user.dictation"
+    log "Logs are available at: /tmp/dictation.stdout.log and /tmp/dictation.stderr.log"
 
 elif [[ -f /etc/debian_version ]] || [[ -f /etc/linuxmint/info ]]; then
-    echo "Setting up for Linux Mint/Debian..."
+    log "Setting up for Linux Mint/Debian..."
     
-    # Create user systemd directory if it doesn't exist
+    # Create user systemd directory
     mkdir -p ~/.config/systemd/user
     
-    # Copy service file to user systemd directory
+    # Copy service file
     cp dictation.service ~/.config/systemd/user/
     
-    # Install autostart entry
+    # Set up autostart
     mkdir -p ~/.config/autostart
     cp dictation-autostart.desktop ~/.config/autostart/
     
-    # Reload user systemd and enable service
+    # Reload systemd and enable service
+    log "Configuring systemd service"
     systemctl --user daemon-reload
-    systemctl --user stop dictation.service 2>/dev/null
+    systemctl --user stop dictation.service 2>/dev/null || true
     systemctl --user enable dictation.service
     
     # Start the service
+    log "Starting service"
     systemctl --user start dictation.service
     
-    echo "Linux setup complete! The service will start automatically on login."
-    echo "To check status: systemctl --user status dictation.service"
-    echo "To view logs: journalctl --user -u dictation.service"
-    echo "An autostart entry has been added to restart the service after login."
-    echo "If you encounter issues, try manually starting the service after login with:"
-    echo "systemctl --user restart dictation.service"
+    # Verify service started successfully
+    sleep 2
+    if ! systemctl --user is-active --quiet dictation.service; then
+        log "Error: Service failed to start"
+        systemctl --user status dictation.service
+        exit 1
+    fi
+    
+    log "Linux setup complete!"
+    log "To check status: systemctl --user status dictation.service"
+    log "To view logs: journalctl --user -u dictation.service"
+    log "Service will automatically restart after login"
 
 else
-    echo "Unsupported operating system"
+    log "Error: Unsupported operating system"
     exit 1
-fi 
+fi
+
+log "Setup completed successfully!" 
