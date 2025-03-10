@@ -13,7 +13,7 @@ cd "$SCRIPT_DIR"
 
 # Make scripts executable
 log "Making scripts executable"
-chmod +x run.sh restart_dictation.sh
+chmod +x run.sh
 
 # Check for Python 3
 if ! command -v python3 &>/dev/null; then
