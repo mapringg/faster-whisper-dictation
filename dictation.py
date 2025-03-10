@@ -220,6 +220,18 @@ class Recorder:
 
     def start(self, event):
         logger.info('Starting recording...')
+        # Reset state before starting new recording
+        self.recording = False
+        self.frames = []
+        if self.stream is not None:
+            try:
+                self.stream.stop()
+                self.stream.close()
+                self.stream = None
+            except Exception as e:
+                logger.error(f"Error cleaning up previous stream: {str(e)}")
+                self.stream = None
+        
         language = event.kwargs.get('language') if hasattr(event, 'kwargs') else None
         thread = threading.Thread(target=self._record_impl, args=(language,))
         thread.start()
@@ -231,18 +243,19 @@ class Recorder:
             try:
                 self.stream.stop()
                 self.stream.close()
+                self.stream = None
             except Exception as e:
                 logger.error(f"Error stopping stream: {str(e)}")
+                self.stream = None
 
     def _record_impl(self, language=None):
         try:
-            self.recording = True
-            self.frames = []
-            
-            # Get default input device
+            # Get default input device before setting recording flag
             input_device, _ = get_default_devices()
             if input_device is None:
-                raise RuntimeError("No default input device available")
+                logger.error("No default input device available")
+                self.callback(audio=None)
+                return
 
             def callback(indata, frames, time, status):
                 if status:
@@ -250,6 +263,10 @@ class Recorder:
                 if self.recording:
                     self.frames.append(indata.copy())
 
+            # Only set recording flag after confirming we have a valid input device
+            self.recording = True
+            self.frames = []
+            
             # Open the input stream
             self.stream = sd.InputStream(
                 device=input_device,
@@ -273,10 +290,19 @@ class Recorder:
                     self.callback(audio=audio_data)
             else:
                 logger.warning("No audio data recorded")
+                self.callback(audio=None)
                 
         except Exception as e:
             logger.error(f"Error during recording: {str(e)}")
             self.recording = False
+            if self.stream is not None:
+                try:
+                    self.stream.stop()
+                    self.stream.close()
+                    self.stream = None
+                except:
+                    pass
+            self.callback(audio=None)
 
 
 class KeyboardReplayer():
