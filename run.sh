@@ -44,4 +44,4 @@ fi
 
 # Run the dictation tool
 log "Starting dictation service..."
-exec python "$SCRIPT_DIR/dictation.py"
+exec python "$SCRIPT_DIR/main.py"
