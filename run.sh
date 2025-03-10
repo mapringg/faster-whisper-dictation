@@ -12,7 +12,8 @@ if [ -z "$GROQ_API_KEY" ]; then
   exit 1
 fi
 
+# Activate virtual environment
+source "$(dirname "$0")/venv/bin/activate"
+
 # Run the dictation tool
-echo "$(dirname "$0")"
-source venv/bin/activate
-python dictation.py
+python "$(dirname "$0")/dictation.py"
