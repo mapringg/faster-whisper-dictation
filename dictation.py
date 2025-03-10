@@ -433,11 +433,11 @@ class App():
         m.on_enter_REPLAYING(self.replayer.replay)
 
         # Sound effects attribution:
-        # start_recording: https://freesound.org/people/MATRIXXX_/sounds/523763/ (CC-BY)
-        # finish_recording: https://freesound.org/people/MATRIXXX_/sounds/705952/ (CC-BY)
+        # start_recording: https://freesound.org/people/alejo902/sounds/559318/ (CC-BY)
+        # finish_recording: https://freesound.org/people/leviclaassen/sounds/107786/ (CC-BY)
         self.SOUND_EFFECTS = {
-            "start_recording": loadwav("assets/523763__matrixxx__select-granted-06.wav"),
-            "finish_recording": loadwav("assets/705952__matrixxx__ai-technology.wav")
+            "start_recording": loadwav("assets/107786__leviclaassen__beepbeep.wav"),
+            "finish_recording": loadwav("assets/559318__alejo902__sonido-3-regulator.wav"),
         }
 
     def beep(self, k, wait=True):
