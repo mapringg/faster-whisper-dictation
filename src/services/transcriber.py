@@ -42,19 +42,19 @@ class GroqTranscriber:
                 "Please set it in your environment or in ~/.env file."
             )
         
-    def save_audio_to_wav(self, audio_data: np.ndarray, filename: str) -> bool:
+    def save_audio_to_flac(self, audio_data: np.ndarray, filename: str) -> bool:
         """
-        Save audio data to a WAV file.
+        Save audio data to a FLAC file (lossless compression, smaller than WAV).
         
         Args:
             audio_data: Numpy array containing audio samples
-            filename: Path to save the WAV file
+            filename: Path to save the FLAC file
             
         Returns:
             bool: True if successful, False otherwise
         """
         try:
-            sf.write(filename, audio_data, 16000, format='WAV', subtype='PCM_16')
+            sf.write(filename, audio_data, 16000, format='FLAC', subtype='PCM_16')
             return True
         except Exception as e:
             logger.error(f"Error saving audio to WAV: {str(e)}")
@@ -166,13 +166,13 @@ class GroqTranscriber:
             return
             
         # Save audio to a temporary WAV file
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(suffix='.flac', delete=False) as temp_file:
             temp_filename = temp_file.name
             
         try:
             # Save audio and handle potential errors
-            if not self.save_audio_to_wav(audio, temp_filename):
-                logger.error("Failed to save audio to temporary file")
+            if not self.save_audio_to_flac(audio, temp_filename):
+                logger.error("Failed to save audio to FLAC temporary file")
                 self.callback(segments=[])
                 return
                 
