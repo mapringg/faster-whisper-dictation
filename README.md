@@ -62,7 +62,7 @@ launchctl unload ~/Library/LaunchAgents/com.user.dictation.plist
 -d, --trigger-key    Key to use for triggering recording (default: <alt_l>)
 -t, --max-time      Maximum recording time in seconds (default: 30)
 -l, --language      Specify language for better accuracy (e.g., 'en' for English)
--m, --model-name    Groq model to use (default: whisper-large-v3-turbo)
+-m, --model-name    Groq model to use (default: whisper-large-v3)
 ```
 
 ## Service Management

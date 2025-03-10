@@ -91,13 +91,13 @@ def load_env_from_file(env_file_path):
 class GroqTranscriber:
     """Handles audio transcription using the Groq API."""
     
-    def __init__(self, callback, model="whisper-large-v3-turbo"):
+    def __init__(self, callback, model="whisper-large-v3"):
         """
         Initialize the transcriber with callback and model.
         
         Args:
             callback: Function to call with transcription results
-            model: Name of the Groq model to use (default: whisper-large-v3-turbo)
+            model: Name of the Groq model to use (default: whisper-large-v3)
         """
         self.callback = callback
         self.model = model
@@ -723,10 +723,10 @@ class DoubleKeyListener:
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Dictation app powered by Groq API')
-    parser.add_argument('-m', '--model-name', type=str, default='whisper-large-v3-turbo',
+    parser.add_argument('-m', '--model-name', type=str, default='whisper-large-v3',
                         help='''\
 Groq model to use for transcription.
-Default: whisper-large-v3-turbo.''')
+Default: whisper-large-v3.''')
     parser.add_argument('-d', '--trigger-key', type=str, default='<alt_l>',
                         help='''\
 Key to use for triggering recording. Double tap to start, single tap to stop.
