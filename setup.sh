@@ -7,7 +7,7 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
-# Check if we're in the correct directory
+# Get absolute path of the script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -39,6 +39,33 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     
     # Create LaunchAgents directory if it doesn't exist
     mkdir -p ~/Library/LaunchAgents
+    
+    # Generate plist file with correct paths
+    cat > com.user.dictation.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.dictation</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>${SCRIPT_DIR}/run.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/dictation.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/dictation.stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>${SCRIPT_DIR}</string>
+</dict>
+</plist>
+EOF
     
     # Copy plist file
     cp com.user.dictation.plist ~/Library/LaunchAgents/
