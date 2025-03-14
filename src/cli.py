@@ -12,11 +12,11 @@ Key to use for triggering recording. Double tap to start, single tap to stop.
 Default: Left Alt (<alt_l>)
 
 See https://pynput.readthedocs.io/en/latest/keyboard.html#pynput.keyboard.Key for supported keys.''')
-    parser.add_argument('-t', '--max-time', type=int, default=30,
+    parser.add_argument('-t', '--max-time', type=int, default=None,
                         help='''\
 Specify the maximum recording time in seconds.
 The app will automatically stop recording after this duration.
-Default: 30 seconds.''')
+If not specified, recording will continue until manually stopped or file size limit is reached.''')
     parser.add_argument('-l', '--language', type=str, default='en',
                         help='''\
 Specify the language of the audio for better transcription accuracy.

@@ -3,6 +3,7 @@ import logging
 import time
 import numpy as np
 import sounddevice as sd
+import os
 from ..core.utils import get_default_devices
 
 logger = logging.getLogger(__name__)
@@ -86,13 +87,14 @@ class Recorder:
     def _process_recorded_audio(self, language: str | None) -> tuple[np.ndarray, str | None] | None:
         """
         Process recorded audio frames into a single array.
+        Check if the audio file size exceeds 40 MB.
         
         Args:
             language: Optional language code for transcription
             
         Returns:
             tuple: (audio_data, language) if successful
-            None: If no audio was recorded
+            None: If no audio was recorded or if file size exceeds limit
         """
         if not self.frames:
             logger.warning("No audio data recorded")
@@ -100,6 +102,21 @@ class Recorder:
             
         try:
             audio_data = np.concatenate(self.frames, axis=0)
+            
+            # Check file size (40 MB limit)
+            # Each sample is 4 bytes (float32) and we have 1 channel
+            # 40 MB = 40 * 1024 * 1024 bytes
+            max_size_bytes = 40 * 1024 * 1024
+            estimated_size_bytes = audio_data.size * 4  # float32 = 4 bytes per sample
+            
+            if estimated_size_bytes > max_size_bytes:
+                logger.warning(f"Audio file too large: {estimated_size_bytes / (1024 * 1024):.2f} MB exceeds 40 MB limit")
+                logger.info("Truncating audio to fit within 40 MB limit")
+                
+                # Calculate how many samples we can keep
+                max_samples = max_size_bytes // 4
+                audio_data = audio_data[:max_samples]
+            
             if language and isinstance(language, str):
                 logger.info(f"Passing language to transcriber: {language}")
                 return audio_data, language
