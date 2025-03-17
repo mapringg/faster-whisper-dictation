@@ -31,7 +31,7 @@ fi
 log "Activating virtual environment and installing requirements"
 source .venv/bin/activate
 pip install --upgrade pip
-pip install sounddevice soundfile pynput transitions requests numpy
+pip install -r requirements.txt
 
 # Detect OS and set up service
 if [[ "$OSTYPE" == "darwin"* ]]; then
