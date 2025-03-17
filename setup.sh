@@ -22,14 +22,14 @@ if ! command -v python3 &>/dev/null; then
 fi
 
 # Create virtual environment if it doesn't exist
-if [ ! -d "venv" ]; then
+if [ ! -d ".venv" ]; then
     log "Creating virtual environment"
-    python3 -m venv venv
+    python3 -m venv .venv
 fi
 
 # Activate virtual environment and install requirements
 log "Activating virtual environment and installing requirements"
-source venv/bin/activate
+source .venv/bin/activate
 pip install --upgrade pip
 pip install sounddevice soundfile pynput transitions requests numpy
 

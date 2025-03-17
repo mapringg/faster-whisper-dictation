@@ -1,7 +1,7 @@
 [tool.ruff]
 line-length = 88
 target-version = "py311"
-exclude = ["venv", ".git", "__pycache__"]
+exclude = [".venv", ".git", "__pycache__"]
 format = { indent-style = "space", quote-style = "double" }
 
 [tool.ruff.lint]

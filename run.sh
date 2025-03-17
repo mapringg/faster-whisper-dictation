@@ -25,15 +25,15 @@ if [ -z "$GROQ_API_KEY" ]; then
 fi
 
 # Check if virtual environment exists
-if [ ! -d "venv" ]; then
-    log "Error: Virtual environment not found in $SCRIPT_DIR/venv"
+if [ ! -d ".venv" ]; then
+    log "Error: Virtual environment not found in $SCRIPT_DIR/.venv"
     log "Please run setup.sh first to create the virtual environment"
     exit 1
 fi
 
 # Activate virtual environment
 log "Activating virtual environment"
-source "venv/bin/activate"
+source ".venv/bin/activate"
 
 # Check if required Python packages are installed
 if ! python -c "import sounddevice; import soundfile; import pynput" 2>/dev/null; then
