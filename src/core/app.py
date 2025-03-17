@@ -50,7 +50,8 @@ class App:
         self.m.on_enter_READY(
             lambda *_: logger.info(
                 f"Double tap {self.args.trigger_key} to start recording. "
-                f"Tap once to stop recording"
+                f"Tap once to stop recording. "
+                f"Double tap left control to cancel recording."
             )
         )
 
@@ -66,6 +67,7 @@ class App:
             "finish_recording": loadwav(
                 "assets/559318__alejo902__sonido-3-regulator.wav"
             ),
+            "cancel_recording": loadwav("assets/160909__racche__scratch-speed.wav"),
         }
 
         # Validate sound effects
@@ -184,6 +186,39 @@ class App:
                 return False
         return False
 
+    def cancel_recording(self) -> bool:
+        """
+        Cancel recording if in RECORDING state and return to READY state.
+        This aborts the recording without transcribing anything.
+
+        Returns:
+            bool: True if recording was cancelled, False otherwise
+        """
+        if not self._can_change_state():
+            logger.warning("State change too fast - ignoring cancel request")
+            return False
+
+        if self.m.is_RECORDING():
+            try:
+                logger.info("Cancelling recording...")
+                self.recorder.stop()
+
+                # Cancel timer if running
+                if self.timer is not None:
+                    self.timer.cancel()
+                    self.timer = None
+
+                self.beep("cancel_recording", wait=False)
+
+                # Go directly to READY state instead of going through transcription
+                self.m.to_READY()
+                self.last_state_change = time.time()
+                return True
+            except Exception as e:
+                logger.error(f"Error cancelling recording: {str(e)}")
+                return False
+        return False
+
     def timer_stop(self) -> None:
         """Handle timer expiration by stopping recording."""
         logger.info("Timer stop")
@@ -192,12 +227,12 @@ class App:
         except Exception as e:
             logger.error(f"Error in timer stop: {str(e)}")
 
-    def _setup_key_listener(self) -> DoubleKeyListener:
+    def _setup_key_listener(self) -> tuple[DoubleKeyListener, DoubleKeyListener]:
         """
-        Configure and return the key listener with normalized trigger key.
+        Configure and return the key listeners with normalized trigger keys.
 
         Returns:
-            DoubleKeyListener: Configured key listener instance
+            tuple: (main_listener, cancel_listener)
         """
 
         def normalize_key(key: str) -> str:
@@ -221,7 +256,18 @@ class App:
 
         try:
             trigger_key = normalize_key(self.args.trigger_key)
-            return DoubleKeyListener(self.start, self.stop, trigger_key)
+            cancel_key = keyboard.Key.ctrl_l  # Left control key
+
+            # Main trigger key listener
+            key_listener = DoubleKeyListener(self.start, self.stop, trigger_key)
+
+            # Cancel key listener (double left control)
+            cancel_listener = DoubleKeyListener(
+                self.cancel_recording, lambda: None, cancel_key
+            )
+
+            # Return both listeners
+            return key_listener, cancel_listener
         except Exception as e:
             logger.error(f"Error setting up key listener: {str(e)}")
             raise
@@ -229,13 +275,18 @@ class App:
     def run(self) -> None:
         """Main application loop that handles key listening and state management."""
         try:
-            # Set up key listener
-            keylistener = self._setup_key_listener()
+            # Set up key listeners
+            keylistener, cancel_listener = self._setup_key_listener()
+
+            # Start cancel listener in a separate thread
+            cancel_listener_thread = threading.Thread(target=cancel_listener.run)
+            cancel_listener_thread.daemon = True
+            cancel_listener_thread.start()
 
             # Initialize state machine
             self.m.to_READY()
 
-            # Start key listener
+            # Start main key listener
             keylistener.run()
         except Exception as e:
             logger.error(f"Application error: {str(e)}")
