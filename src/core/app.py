@@ -31,6 +31,7 @@ class App:
         self.timer = None
         self.last_state_change = 0
         self.state_change_delay = 0.5  # Minimum delay between state changes in seconds
+        self.enable_sounds = args.enable_sounds  # Store the sound enable flag
 
         # Initialize state machine
         self.m = create_state_machine()
@@ -42,6 +43,11 @@ class App:
 
         # Initialize status icon
         self.status_icon = StatusIcon(on_exit=self._exit_app)
+
+        # Connect status icon sound toggle to the app's sound setting
+        self.status_icon.set_sound_toggle_callback(
+            self._toggle_sounds, self.enable_sounds
+        )
 
         # Configure state machine callbacks that combine functionality
         self.m.on_enter_READY(self._on_enter_ready)
@@ -96,6 +102,11 @@ class App:
         import sys
 
         sys.exit(0)
+
+    def _toggle_sounds(self, enabled: bool):
+        """Toggle sound effects on/off."""
+        self.enable_sounds = enabled
+        logger.info(f"Sound effects {'enabled' if enabled else 'disabled'}")
 
     def _load_sound_effects(self) -> dict[str, np.ndarray | None]:
         """
@@ -165,6 +176,10 @@ class App:
             sound_name: Name of the sound effect to play
             wait: Whether to wait for sound to finish playing
         """
+        # Skip if sounds are disabled
+        if not self.enable_sounds:
+            return
+
         sound = self.SOUND_EFFECTS.get(sound_name)
         if sound is None:
             logger.error(f"Invalid sound effect: {sound_name}")

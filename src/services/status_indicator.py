@@ -37,6 +37,8 @@ class StatusIcon:
         self._icon = None
         self._icon_thread = None
         self._on_exit = on_exit
+        self._sound_toggle_callback = None
+        self._sounds_enabled = False
         self._state_colors = {
             StatusIconState.READY: (0, 150, 0),  # Green
             StatusIconState.RECORDING: (200, 0, 0),  # Red
@@ -75,11 +77,31 @@ class StatusIcon:
 
     def _setup_menu(self):
         """Create the right-click menu for the icon."""
-        return Menu(
+        sound_text = "Enable Sounds" if not self._sounds_enabled else "Disable Sounds"
+
+        menu_items = [
             MenuItem(lambda _: self._get_menu_title(), None, enabled=False),
             Menu.SEPARATOR,
-            MenuItem("Exit", self._exit),
-        )
+        ]
+
+        # Add sound toggle option if callback is set
+        if self._sound_toggle_callback:
+            menu_items.append(MenuItem(sound_text, self._toggle_sounds))
+            menu_items.append(Menu.SEPARATOR)
+
+        menu_items.append(MenuItem("Exit", self._exit))
+
+        return Menu(*menu_items)
+
+    def _toggle_sounds(self):
+        """Toggle sound effects and update the menu."""
+        if self._sound_toggle_callback:
+            self._sounds_enabled = not self._sounds_enabled
+            self._sound_toggle_callback(self._sounds_enabled)
+            # Update menu
+            if self._icon:
+                self._icon.menu = self._setup_menu()
+        return False  # Don't close the menu
 
     def _exit(self):
         """Handle exit from the menu."""
@@ -165,6 +187,22 @@ class StatusIcon:
         # Wait for thread to end
         if self._icon_thread and self._icon_thread.is_alive():
             self._icon_thread.join(timeout=1.0)
+
+    def set_sound_toggle_callback(
+        self, callback: Callable[[bool], None], initial_state: bool = False
+    ):
+        """
+        Set callback for toggling sound effects.
+
+        Args:
+            callback: Function to call when sounds are toggled (receives bool indicating if sounds are enabled)
+            initial_state: Initial state of the sound toggle
+        """
+        self._sound_toggle_callback = callback
+        self._sounds_enabled = initial_state
+        # Update menu if icon already exists
+        if self._icon:
+            self._icon.menu = self._setup_menu()
 
 
 def get_global_icon():
