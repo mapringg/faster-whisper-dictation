@@ -4,7 +4,7 @@ import threading
 import numpy as np
 import sounddevice as sd
 
-from ..core.utils import get_default_devices
+from ..core.utils import get_default_devices, refresh_devices
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +150,11 @@ class Recorder:
             language: Optional language code for transcription
         """
         try:
-            # Get and validate input device
+            # Refresh audio devices to detect any hardware changes
+            refresh_devices()
+
+            # Get and validate input device - done right before starting recording
+            # to ensure we use the most current system default devices
             input_device, _ = get_default_devices()
             if input_device is None:
                 logger.error("No default input device available")

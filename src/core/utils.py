@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 
 import sounddevice as sd
 import soundfile as sf
@@ -11,12 +12,39 @@ sd.default.samplerate = 44100
 sd.default.channels = 1
 
 
+def refresh_devices():
+    """
+    Force a refresh of the audio devices system.
+    Useful after hardware changes like connecting/disconnecting devices.
+    """
+    try:
+        logger.info("Refreshing audio devices...")
+        # Close and reinitialize PortAudio to detect device changes
+        sd._terminate()
+        time.sleep(0.5)  # Give system time to register changes
+        sd._initialize()
+
+        # Log available devices after refresh
+        devices = sd.query_devices()
+        logger.info(f"Found {len(devices)} audio devices after refresh")
+        return True
+    except Exception as e:
+        logger.error(f"Error refreshing audio devices: {str(e)}")
+        return False
+
+
 def get_default_devices():
     """Get the current default input and output devices."""
     try:
+        # Query the system for current devices and defaults
         devices = sd.query_devices()
-        default_input = sd.default.device[0]
-        default_output = sd.default.device[1]
+
+        # Get the current system default devices (not cached values)
+        host_apis = sd.query_hostapis()
+        default_host_api = host_apis[sd.default.hostapi]
+
+        default_input = default_host_api["default_input_device"]
+        default_output = default_host_api["default_output_device"]
 
         input_info = devices[default_input] if default_input is not None else None
         output_info = devices[default_output] if default_output is not None else None
@@ -37,13 +65,33 @@ def get_default_devices():
 def playsound(data, wait=True):
     """Play audio data through the default output device."""
     try:
+        # Always get the current default output device right before playback
+        devices = sd.query_devices()
         _, output_device = get_default_devices()
-        if output_device is not None:
-            sd.play(data, device=output_device)
+
+        # First try with the default device
+        try:
+            if output_device is not None and output_device < len(devices):
+                sd.play(data, device=output_device)
+                if wait:
+                    sd.wait()
+                return
+        except Exception as e:
+            logger.warning(
+                f"Could not play on default device: {str(e)}, trying fallback options"
+            )
+
+        # If default device fails, try system default (without specifying device)
+        try:
+            logger.info("Trying system default output device")
+            sd.play(data)
             if wait:
                 sd.wait()
-        else:
-            logger.error("No default output device available")
+            return
+        except Exception as e:
+            logger.error(f"Error playing on system default: {str(e)}")
+
+        logger.error("No available output device found for playback")
     except Exception as e:
         logger.error(f"Error playing sound: {str(e)}")
 
