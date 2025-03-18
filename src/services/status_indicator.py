@@ -1,0 +1,187 @@
+import logging
+import platform
+import threading
+from collections.abc import Callable
+from enum import Enum
+
+from PIL import Image, ImageDraw
+from pystray import Icon, Menu, MenuItem
+
+logger = logging.getLogger(__name__)
+
+# Global variable to hold icon instance for main thread access on macOS
+_global_icon = None
+
+
+class StatusIconState(Enum):
+    """States for the status icon."""
+
+    READY = "ready"  # Green
+    RECORDING = "recording"  # Red
+    TRANSCRIBING = "transcribing"  # Yellow
+    REPLAYING = "replaying"  # Blue
+    ERROR = "error"  # Gray
+
+
+class StatusIcon:
+    """System tray icon that reflects the application state."""
+
+    def __init__(self, on_exit: Callable | None = None):
+        """
+        Initialize the status icon.
+
+        Args:
+            on_exit: Optional callback to run when exit is selected from the menu
+        """
+        self.state = StatusIconState.READY
+        self._icon = None
+        self._icon_thread = None
+        self._on_exit = on_exit
+        self._state_colors = {
+            StatusIconState.READY: (0, 150, 0),  # Green
+            StatusIconState.RECORDING: (200, 0, 0),  # Red
+            StatusIconState.TRANSCRIBING: (200, 150, 0),  # Yellow/Orange
+            StatusIconState.REPLAYING: (0, 0, 200),  # Blue
+            StatusIconState.ERROR: (100, 100, 100),  # Gray
+        }
+
+        # State descriptions for tooltips and menus
+        self._state_descriptions = {
+            StatusIconState.READY: "Ready - Double tap to start recording",
+            StatusIconState.RECORDING: "Recording... - Tap once to stop",
+            StatusIconState.TRANSCRIBING: "Transcribing... please wait",
+            StatusIconState.REPLAYING: "Replaying text...",
+            StatusIconState.ERROR: "Error occurred",
+        }
+
+    def _create_image(self, width, height, color):
+        """Create a simple colored circle image for the icon."""
+        image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        dc = ImageDraw.Draw(image)
+
+        # Draw a colored circle
+        dc.ellipse([(4, 4), (width - 4, height - 4)], fill=color)
+
+        return image
+
+    def _get_icon_image(self):
+        """Get the appropriate icon based on current state."""
+        color = self._state_colors.get(self.state, (100, 100, 100))
+        return self._create_image(22, 22, color)
+
+    def _get_menu_title(self):
+        """Get the current state description for the menu."""
+        return f"Status: {self._state_descriptions.get(self.state, 'Unknown')}"
+
+    def _setup_menu(self):
+        """Create the right-click menu for the icon."""
+        return Menu(
+            MenuItem(lambda _: self._get_menu_title(), None, enabled=False),
+            Menu.SEPARATOR,
+            MenuItem("Exit", self._exit),
+        )
+
+    def _exit(self):
+        """Handle exit from the menu."""
+        if self._on_exit:
+            self._on_exit()
+        return True  # This tells pystray to exit
+
+    def start(self):
+        """Start the status icon in a separate thread."""
+        if self._icon_thread and self._icon_thread.is_alive():
+            logger.warning("Status icon thread is already running")
+            return
+
+        # Create icon in the current thread (which should be the main thread)
+        system = platform.system()
+        icon_title = "Dictation Assistant"
+
+        # macOS and Linux handle tooltips differently
+        if system == "Darwin":  # macOS
+            icon_title = "Dictation"  # Shorter title for macOS menu bar
+
+        # Create the icon on the main thread
+        self._icon = Icon(
+            name="Dictation Assistant",
+            icon=self._get_icon_image(),
+            title=icon_title,
+            menu=self._setup_menu(),
+        )
+
+        global _global_icon
+        _global_icon = self._icon
+
+        # For macOS, we'll run the icon in the main thread later
+        # For other platforms, we can use a separate thread
+        if system == "Darwin":
+            # Just prepare the icon, will be run from main thread
+            logger.info("Status icon created (will run on main thread)")
+        else:
+            # On non-macOS platforms, run in a separate thread
+            def run_icon():
+                try:
+                    self._icon.run()
+                except Exception as e:
+                    logger.error(f"Error in status icon thread: {e}")
+
+            self._icon_thread = threading.Thread(target=run_icon, daemon=True)
+            self._icon_thread.start()
+            logger.info("Status icon started in thread")
+
+    def update_state(self, new_state: StatusIconState):
+        """
+        Update the icon to reflect a new state.
+
+        Args:
+            new_state: The new state to display
+        """
+        self.state = new_state
+        if self._icon:
+            try:
+                # Update icon appearance
+                self._icon.icon = self._get_icon_image()
+
+                # Update tooltip/title
+                description = self._state_descriptions.get(new_state, "Unknown state")
+                self._icon.title = f"Dictation: {description}"
+
+                # Update menu (will refresh on next open)
+                self._icon.menu = self._setup_menu()
+
+                logger.info(f"Updated status icon to: {new_state.name}")
+            except Exception as e:
+                logger.error(f"Failed to update status icon: {e}")
+
+    def stop(self):
+        """Stop the status icon."""
+        if self._icon:
+            try:
+                self._icon.stop()
+                logger.info("Status icon stopped")
+            except Exception as e:
+                logger.error(f"Error stopping status icon: {e}")
+
+        # Wait for thread to end
+        if self._icon_thread and self._icon_thread.is_alive():
+            self._icon_thread.join(timeout=1.0)
+
+
+def get_global_icon():
+    """Get the global icon instance for main thread access."""
+    global _global_icon
+    return _global_icon
+
+
+def run_icon_on_macos():
+    """
+    Run the icon loop on macOS main thread.
+    This should be called from the main thread after the app is set up.
+    """
+    global _global_icon
+    if _global_icon and platform.system() == "Darwin":
+        try:
+            logger.info("Running status icon on main thread (macOS)")
+            _global_icon.run()
+        except Exception as e:
+            logger.error(f"Error running icon on main thread: {e}")
