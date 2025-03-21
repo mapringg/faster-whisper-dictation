@@ -1,7 +1,16 @@
 import argparse
+import platform
 
 
 def parse_args():
+    # Set default trigger key based on platform
+    if platform.system() == "Darwin":  # macOS
+        default_trigger_key = "Key.cmd_r"  # Right Command key
+        default_trigger_desc = "Right Command key (Key.cmd_r)"
+    else:  # Linux and other platforms
+        default_trigger_key = "Key.ctrl_r"  # Right Control key
+        default_trigger_desc = "Right Control key (Key.ctrl_r)"
+
     parser = argparse.ArgumentParser(
         description="Dictation app powered by OpenAI and Groq APIs"
     )
@@ -27,11 +36,12 @@ Transcription service to use (default: openai)""",
         "-d",
         "--trigger-key",
         type=str,
-        default="<alt_l>",
-        help="""\
+        default=default_trigger_key,
+        help=f"""\
 Key to use for triggering recording. Double tap to start, single tap to stop.
-Default: Left Alt (<alt_l>)
+Default: {default_trigger_desc}
 
+For special keys, use Key.name format: Key.cmd_r, Key.alt_r, etc.
 See https://pynput.readthedocs.io/en/latest/keyboard.html#pynput.keyboard.Key for supported keys.""",
     )
     parser.add_argument(

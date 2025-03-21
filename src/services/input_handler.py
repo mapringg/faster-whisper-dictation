@@ -133,7 +133,7 @@ class KeyListener:
 
         Args:
             callback: Function to call when key is pressed
-            key: Key combination to listen for (e.g. '<alt_l>')
+            key: Key combination to listen for (e.g. 'Key.cmd_r')
         """
         self.callback = callback
         self.key = key

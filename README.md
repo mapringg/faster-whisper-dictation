@@ -44,10 +44,17 @@ The setup script will:
 
 ## Usage
 
-By default, the Left Alt key is used as the trigger:
+On macOS:
 
-- **Double-tap** Left Alt to start recording
-- **Single-tap** Left Alt to stop recording
+- **Double-tap** Right Command to start recording
+- **Single-tap** Right Command to stop recording
+- **Double-tap** Right Option to cancel recording
+
+On Linux:
+
+- **Double-tap** Right Control to start recording
+- **Single-tap** Right Control to stop recording
+- **Double-tap** Right Alt to cancel recording
 
 Your speech will be automatically transcribed and typed at the current cursor position.
 
@@ -66,7 +73,7 @@ launchctl unload ~/Library/LaunchAgents/com.user.dictation.plist
 ## Options
 
 ```
--d, --trigger-key    Key to use for triggering recording (default: <alt_l>)
+-d, --trigger-key    Key to use for triggering recording (default: Key.cmd_r)
 -t, --max-time      Maximum recording time in seconds (default: 30)
 -l, --language      Specify language for better accuracy (e.g., 'en' for English)
 -m, --model-name    Model to use (default: gpt-4o-transcribe for OpenAI, whisper-large-v3 for Groq)

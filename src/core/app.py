@@ -69,11 +69,17 @@ class App:
         self.SOUND_EFFECTS = self._load_sound_effects()
 
     def _on_enter_ready(self, *_):
-        """Handle entering READY state."""
+        """Callback that runs when entering READY state."""
+        # Get the platform-specific cancel key name for the message
+        if platform.system() == "Darwin":
+            cancel_key_name = "right option"
+        else:
+            cancel_key_name = "right alt"
+
         logger.info(
             f"Double tap {self.args.trigger_key} to start recording. "
             f"Tap once to stop recording. "
-            f"Double tap left control to cancel recording."
+            f"Double tap {cancel_key_name} to cancel recording."
         )
         self.status_icon.update_state(StatusIconState.READY)
 
@@ -315,6 +321,17 @@ class App:
             Returns:
                 str: Normalized key string
             """
+            # Handle Key.attr format (e.g., "Key.cmd_r")
+            if key.startswith("Key."):
+                attr_name = key[4:]  # Remove "Key." prefix
+                try:
+                    # Get the attribute directly from keyboard.Key
+                    return getattr(keyboard.Key, attr_name)
+                except AttributeError as err:
+                    logger.error(f"Invalid key attribute: {attr_name}")
+                    raise ValueError(f"Invalid key attribute: {attr_name}") from err
+
+            # Handle bracket format (e.g., "<cmd_r>")
             key = key.replace("<win>", "<cmd>").replace("<super>", "<cmd>")
             try:
                 parsed_key = keyboard.HotKey.parse(key)[0]
@@ -326,12 +343,17 @@ class App:
 
         try:
             trigger_key = normalize_key(self.args.trigger_key)
-            cancel_key = keyboard.Key.ctrl_l  # Left control key
+
+            # Set cancel key based on platform
+            if platform.system() == "Darwin":  # macOS
+                cancel_key = keyboard.Key.alt_r  # Right option key on Mac
+            else:
+                cancel_key = keyboard.Key.alt_r  # Right alt key on Linux
 
             # Main trigger key listener
             key_listener = DoubleKeyListener(self.start, self.stop, trigger_key)
 
-            # Cancel key listener (double left control)
+            # Cancel key listener (double tap to cancel)
             cancel_listener = DoubleKeyListener(
                 self.cancel_recording, lambda: None, cancel_key
             )
