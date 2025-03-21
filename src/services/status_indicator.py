@@ -1,6 +1,7 @@
 import logging
 import platform
 import threading
+import time
 from collections.abc import Callable
 from enum import Enum
 
@@ -36,6 +37,8 @@ class StatusIcon:
         self.state = StatusIconState.READY
         self._icon = None
         self._icon_thread = None
+        self._animation_thread = None
+        self._animation_running = False
         self._on_exit = on_exit
         self._sound_toggle_callback = None
         self._sounds_enabled = False
@@ -48,6 +51,11 @@ class StatusIcon:
             StatusIconState.REPLAYING: (0, 0, 200),  # Blue
             StatusIconState.ERROR: (100, 100, 100),  # Gray
         }
+
+        # Frame cache for animations
+        self._animation_frames = {}
+        self._current_frame = 0
+        self._animation_speed = 0.2  # seconds between frames
 
         # State descriptions for tooltips and menus
         self._state_descriptions = {
@@ -65,20 +73,148 @@ class StatusIcon:
             # Add other languages here as needed
         }
 
-    def _create_image(self, width, height, color):
-        """Create a simple colored circle image for the icon."""
+        # Initialize animation frames
+        self._init_animation_frames()
+
+    def _init_animation_frames(self):
+        """Initialize animation frames for each state."""
+        # Ready state (pulsing green circle)
+        self._animation_frames[StatusIconState.READY] = self._create_pulse_animation(
+            (0, 150, 0), 6
+        )
+
+        # Recording state (blinking red circle)
+        self._animation_frames[StatusIconState.RECORDING] = (
+            self._create_blink_animation((200, 0, 0), 4)
+        )
+
+        # Transcribing state (spinning yellow circle)
+        self._animation_frames[StatusIconState.TRANSCRIBING] = (
+            self._create_spin_animation((200, 150, 0), 8)
+        )
+
+        # Replaying state (pulsing blue)
+        self._animation_frames[StatusIconState.REPLAYING] = (
+            self._create_pulse_animation((0, 0, 200), 6)
+        )
+
+        # Error state (gray X mark)
+        self._animation_frames[StatusIconState.ERROR] = [self._create_error_image()]
+
+    def _create_pulse_animation(self, color, num_frames=6):
+        """Create a pulsing animation with varying opacity."""
+        frames = []
+        width, height = 22, 22
+
+        for i in range(num_frames):
+            # Calculate opacity based on sine wave pattern
+            factor = 0.5 + 0.5 * (i / (num_frames - 1))  # 0.5 to 1.0 and back
+            current_color = (color[0], color[1], color[2], int(255 * factor))
+
+            image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            dc = ImageDraw.Draw(image)
+            dc.ellipse([(4, 4), (width - 4, height - 4)], fill=current_color)
+            frames.append(image)
+
+        # Add frames in reverse for smooth pulsing (except last frame to avoid duplication)
+        frames.extend(frames[:-1][::-1])
+        return frames
+
+    def _create_blink_animation(self, color, num_frames=4):
+        """Create a blinking animation that alternates between full color and transparent."""
+        frames = []
+        width, height = 22, 22
+
+        # Full color frame
+        image1 = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        dc1 = ImageDraw.Draw(image1)
+        dc1.ellipse([(4, 4), (width - 4, height - 4)], fill=color)
+
+        # Semi-transparent frame
+        image2 = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        dc2 = ImageDraw.Draw(image2)
+        transparent_color = (color[0], color[1], color[2], 100)
+        dc2.ellipse([(4, 4), (width - 4, height - 4)], fill=transparent_color)
+
+        # Alternate between frames
+        for i in range(num_frames):
+            if i % 2 == 0:
+                frames.append(image1)
+            else:
+                frames.append(image2)
+
+        return frames
+
+    def _create_spin_animation(self, color, num_frames=8):
+        """Create a spinning animation with an arc that rotates."""
+        frames = []
+        width, height = 22, 22
+
+        for i in range(num_frames):
+            image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            dc = ImageDraw.Draw(image)
+
+            # Draw base circle (semi-transparent)
+            base_color = (color[0], color[1], color[2], 100)
+            dc.ellipse([(4, 4), (width - 4, height - 4)], fill=base_color)
+
+            # Draw spinning arc
+            start_angle = (i * 45) % 360
+            end_angle = (start_angle + 90) % 360
+
+            # Ensure proper order of angles for arc drawing
+            if start_angle > end_angle:
+                start_angle, end_angle = end_angle, start_angle
+
+            dc.pieslice(
+                [(4, 4), (width - 4, height - 4)],
+                start=start_angle,
+                end=end_angle,
+                fill=color,
+            )
+            frames.append(image)
+
+        return frames
+
+    def _create_error_image(self):
+        """Create an error image with an X mark."""
+        width, height = 22, 22
         image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         dc = ImageDraw.Draw(image)
 
-        # Draw a colored circle
-        dc.ellipse([(4, 4), (width - 4, height - 4)], fill=color)
+        # Draw circle background
+        dc.ellipse([(4, 4), (width - 4, height - 4)], fill=(100, 100, 100))
+
+        # Draw X mark
+        line_color = (255, 255, 255)
+        line_width = 2
+        dc.line([(7, 7), (width - 7, height - 7)], fill=line_color, width=line_width)
+        dc.line([(width - 7, 7), (7, height - 7)], fill=line_color, width=line_width)
 
         return image
 
     def _get_icon_image(self):
-        """Get the appropriate icon based on current state."""
-        color = self._state_colors.get(self.state, (100, 100, 100))
-        return self._create_image(22, 22, color)
+        """Get the current frame of the animation for the current state."""
+        frames = self._animation_frames.get(self.state, [])
+        if not frames:
+            # Fallback to static image if no animation frames
+            color = self._state_colors.get(self.state, (100, 100, 100))
+            return self._create_static_image(color)
+
+        if len(frames) == 1:
+            return frames[0]  # Static image (single frame)
+
+        # Return current frame from animation
+        frame_idx = self._current_frame % len(frames)
+        return frames[frame_idx]
+
+    def _create_static_image(self, color):
+        """Create a simple colored circle image for the icon."""
+        width, height = 22, 22
+        image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        dc = ImageDraw.Draw(image)
+        dc.ellipse([(4, 4), (width - 4, height - 4)], fill=color)
+        return image
 
     def _get_menu_title(self):
         """Get the current state description for the menu."""
@@ -154,9 +290,45 @@ class StatusIcon:
 
     def _exit(self):
         """Handle exit from the menu."""
+        self._stop_animation()
         if self._on_exit:
             self._on_exit()
         return True  # This tells pystray to exit
+
+    def _run_animation(self):
+        """Run the animation loop in a separate thread."""
+        try:
+            while self._animation_running:
+                # Update the frame counter
+                self._current_frame += 1
+
+                # Update the icon with the new frame
+                if self._icon:
+                    self._icon.icon = self._get_icon_image()
+
+                # Sleep until next frame
+                time.sleep(self._animation_speed)
+        except Exception as e:
+            logger.error(f"Error in animation thread: {e}")
+
+    def _start_animation(self):
+        """Start the animation thread if not already running."""
+        if self._animation_thread and self._animation_thread.is_alive():
+            return
+
+        self._animation_running = True
+        self._animation_thread = threading.Thread(
+            target=self._run_animation, daemon=True
+        )
+        self._animation_thread.start()
+        logger.info("Animation thread started")
+
+    def _stop_animation(self):
+        """Stop the animation thread."""
+        self._animation_running = False
+        if self._animation_thread and self._animation_thread.is_alive():
+            self._animation_thread.join(timeout=1.0)
+            logger.info("Animation thread stopped")
 
     def start(self):
         """Start the status icon in a separate thread."""
@@ -182,6 +354,9 @@ class StatusIcon:
 
         global _global_icon
         _global_icon = self._icon
+
+        # Start animation
+        self._start_animation()
 
         # For macOS, we'll run the icon in the main thread later
         # For other platforms, we can use a separate thread
@@ -210,6 +385,9 @@ class StatusIcon:
         self.state = new_state
         if self._icon:
             try:
+                # Reset frame counter for new animation
+                self._current_frame = 0
+
                 # Update icon appearance
                 self._icon.icon = self._get_icon_image()
 
@@ -226,6 +404,8 @@ class StatusIcon:
 
     def stop(self):
         """Stop the status icon."""
+        self._stop_animation()
+
         if self._icon:
             try:
                 self._icon.stop()
