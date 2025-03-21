@@ -17,11 +17,28 @@ if [ -f "$HOME/.env" ]; then
     source "$HOME/.env"
 fi
 
-# Make sure GROQ_API_KEY is set
-if [ -z "$GROQ_API_KEY" ]; then
-    log "Error: GROQ_API_KEY environment variable is not set"
-    log "Please set it in $HOME/.env file with: GROQ_API_KEY=your_api_key_here"
-    exit 1
+# Parse command line arguments to check for transcriber selection
+TRANSCRIBER="openai"  # Default to OpenAI
+for arg in "$@"; do
+    if [[ $arg == "--transcriber" ]]; then
+        TRANSCRIBER="${2:-openai}"
+        break
+    fi
+done
+
+# Check for appropriate API key based on transcriber
+if [ "$TRANSCRIBER" = "openai" ]; then
+    if [ -z "$OPENAI_API_KEY" ]; then
+        log "Error: OPENAI_API_KEY environment variable is not set"
+        log "Please set it in $HOME/.env file with: OPENAI_API_KEY=your_api_key_here"
+        exit 1
+    fi
+else
+    if [ -z "$GROQ_API_KEY" ]; then
+        log "Error: GROQ_API_KEY environment variable is not set"
+        log "Please set it in $HOME/.env file with: GROQ_API_KEY=your_api_key_here"
+        exit 1
+    fi
 fi
 
 # Check if virtual environment exists
@@ -44,4 +61,4 @@ fi
 
 # Run the dictation tool
 log "Starting dictation service..."
-exec python "$SCRIPT_DIR/main.py"
+exec python "$SCRIPT_DIR/main.py" "$@"

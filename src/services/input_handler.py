@@ -100,6 +100,9 @@ class KeyboardReplayer:
                             is_first = False
                             continue
 
+                        # Set is_first to False after processing the first character
+                        is_first = False
+
                         # Type character with retry mechanism
                         if self._type_with_retry(char):
                             text_buffer.append(char)

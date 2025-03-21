@@ -1,6 +1,6 @@
 # Faster Whisper Dictation
 
-A lightweight dictation service that uses Groq's API for fast and accurate speech-to-text transcription. Double-tap a key to start recording, single-tap to stop, and your speech will be automatically transcribed and typed out.
+A lightweight dictation service that uses OpenAI's API (default) or Groq's API for fast and accurate speech-to-text transcription. Double-tap a key to start recording, single-tap to stop, and your speech will be automatically transcribed and typed out.
 
 ## Requirements
 
@@ -20,7 +20,17 @@ A lightweight dictation service that uses Groq's API for fast and accurate speec
    cd faster-whisper-dictation
    ```
 
-2. Run the setup script:
+2. Set up your API keys:
+   Create a `.env` file in your home directory with your API keys:
+
+   ```bash
+   # Required for OpenAI (default transcriber)
+   OPENAI_API_KEY=your_openai_api_key_here
+   # Required only if using Groq transcriber
+   GROQ_API_KEY=your_groq_api_key_here
+   ```
+
+3. Run the setup script:
    ```bash
    ./setup.sh
    ```
@@ -59,7 +69,9 @@ launchctl unload ~/Library/LaunchAgents/com.user.dictation.plist
 -d, --trigger-key    Key to use for triggering recording (default: <alt_l>)
 -t, --max-time      Maximum recording time in seconds (default: 30)
 -l, --language      Specify language for better accuracy (e.g., 'en' for English)
--m, --model-name    Groq model to use (default: whisper-large-v3)
+-m, --model-name    Model to use (default: gpt-4o-transcribe for OpenAI, whisper-large-v3 for Groq)
+--transcriber       Transcription service to use: 'openai' (default) or 'groq'
+--enable-sounds     Enable sound effects for recording actions
 ```
 
 ## Service Management
@@ -110,7 +122,7 @@ The project is organized as follows:
 1. If the service isn't starting:
 
    - Check the logs (see above)
-   - Ensure your Groq API key is set in `~/.env`
+   - Ensure your API keys are set in `~/.env`
    - Verify Python and required packages are installed
 
 2. If recording isn't working:

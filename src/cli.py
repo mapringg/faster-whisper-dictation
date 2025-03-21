@@ -2,15 +2,26 @@ import argparse
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Dictation app powered by Groq API")
+    parser = argparse.ArgumentParser(
+        description="Dictation app powered by OpenAI and Groq APIs"
+    )
     parser.add_argument(
         "-m",
         "--model-name",
         type=str,
-        default="whisper-large-v3",
+        default="gpt-4o-transcribe",
         help="""\
-Groq model to use for transcription.
-Default: whisper-large-v3.""",
+Model to use for transcription.
+For OpenAI: gpt-4o-transcribe
+For Groq: whisper-large-v3""",
+    )
+    parser.add_argument(
+        "--transcriber",
+        type=str,
+        choices=["openai", "groq"],
+        default="openai",
+        help="""\
+Transcription service to use (default: openai)""",
     )
     parser.add_argument(
         "-d",

@@ -10,7 +10,7 @@ from ..core.utils import loadwav, playsound
 from ..services.input_handler import DoubleKeyListener, KeyboardReplayer
 from ..services.recorder import Recorder
 from ..services.status_indicator import StatusIcon, StatusIconState
-from ..services.transcriber import GroqTranscriber
+from ..services.transcriber import GroqTranscriber, OpenAITranscriber
 from .state_machine import create_state_machine
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,17 @@ class App:
 
         # Initialize components
         self.recorder = Recorder(self.m.finish_recording)
-        self.transcriber = GroqTranscriber(self.m.finish_transcribing, args.model_name)
+
+        # Initialize the appropriate transcriber based on the argument
+        if args.transcriber == "openai":
+            self.transcriber = OpenAITranscriber(
+                self.m.finish_transcribing, args.model_name
+            )
+        else:  # groq
+            self.transcriber = GroqTranscriber(
+                self.m.finish_transcribing, args.model_name
+            )
+
         self.replayer = KeyboardReplayer(self.m.finish_replaying)
 
         # Initialize status icon
