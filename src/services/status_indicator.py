@@ -39,6 +39,8 @@ class StatusIcon:
         self._on_exit = on_exit
         self._sound_toggle_callback = None
         self._sounds_enabled = False
+        self._language_callback = None
+        self._current_language = "en"  # Default to English
         self._state_colors = {
             StatusIconState.READY: (0, 150, 0),  # Green
             StatusIconState.RECORDING: (200, 0, 0),  # Red
@@ -54,6 +56,13 @@ class StatusIcon:
             StatusIconState.TRANSCRIBING: "Transcribing... please wait",
             StatusIconState.REPLAYING: "Replaying text...",
             StatusIconState.ERROR: "Error occurred",
+        }
+
+        # Available languages with labels
+        self._languages = {
+            "en": "English",
+            "th": "Thai",
+            # Add other languages here as needed
         }
 
     def _create_image(self, width, height, color):
@@ -75,6 +84,16 @@ class StatusIcon:
         """Get the current state description for the menu."""
         return f"Status: {self._state_descriptions.get(self.state, 'Unknown')}"
 
+    def _select_english(self):
+        """Select English language."""
+        self._select_language("en")
+        return False  # Don't close the menu
+
+    def _select_thai(self):
+        """Select Thai language."""
+        self._select_language("th")
+        return False  # Don't close the menu
+
     def _setup_menu(self):
         """Create the right-click menu for the icon."""
         sound_text = "Enable Sounds" if not self._sounds_enabled else "Disable Sounds"
@@ -89,6 +108,26 @@ class StatusIcon:
             menu_items.append(MenuItem(sound_text, self._toggle_sounds))
             menu_items.append(Menu.SEPARATOR)
 
+        # Add language selection if callback is set
+        if self._language_callback:
+            # Add language header
+            menu_items.append(
+                MenuItem(
+                    f"Language: {self._languages.get(self._current_language, 'Unknown')}",
+                    None,
+                    enabled=False,
+                )
+            )
+
+            # Add language options with checkmark as suffix
+            suffix_en = " ✓" if self._current_language == "en" else ""
+            suffix_th = " ✓" if self._current_language == "th" else ""
+
+            menu_items.append(MenuItem(f"English{suffix_en}", self._select_english))
+            menu_items.append(MenuItem(f"Thai{suffix_th}", self._select_thai))
+
+            menu_items.append(Menu.SEPARATOR)
+
         menu_items.append(MenuItem("Exit", self._exit))
 
         return Menu(*menu_items)
@@ -98,6 +137,16 @@ class StatusIcon:
         if self._sound_toggle_callback:
             self._sounds_enabled = not self._sounds_enabled
             self._sound_toggle_callback(self._sounds_enabled)
+            # Update menu
+            if self._icon:
+                self._icon.menu = self._setup_menu()
+        return False  # Don't close the menu
+
+    def _select_language(self, language_code):
+        """Handle language selection from the menu."""
+        if self._language_callback and language_code != self._current_language:
+            self._current_language = language_code
+            self._language_callback(language_code)
             # Update menu
             if self._icon:
                 self._icon.menu = self._setup_menu()
@@ -200,6 +249,23 @@ class StatusIcon:
         """
         self._sound_toggle_callback = callback
         self._sounds_enabled = initial_state
+        # Update menu if icon already exists
+        if self._icon:
+            self._icon.menu = self._setup_menu()
+
+    def set_language_callback(
+        self, callback: Callable[[str], None], initial_language: str = "en"
+    ):
+        """
+        Set callback for changing language.
+
+        Args:
+            callback: Function to call when language is changed (receives language code)
+            initial_language: Initial language code
+        """
+        self._language_callback = callback
+        if initial_language in self._languages:
+            self._current_language = initial_language
         # Update menu if icon already exists
         if self._icon:
             self._icon.menu = self._setup_menu()

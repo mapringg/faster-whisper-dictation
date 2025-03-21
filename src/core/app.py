@@ -63,6 +63,9 @@ class App:
             self._toggle_sounds, self.enable_sounds
         )
 
+        # Connect status icon language selector to the app's language setting
+        self.status_icon.set_language_callback(self._change_language, self.language)
+
         # Configure state machine callbacks that combine functionality
         self.m.on_enter_READY(self._on_enter_ready)
         self.m.on_enter_RECORDING(self._on_enter_recording)
@@ -127,6 +130,11 @@ class App:
         """Toggle sound effects on/off."""
         self.enable_sounds = enabled
         logger.info(f"Sound effects {'enabled' if enabled else 'disabled'}")
+
+    def _change_language(self, language_code: str):
+        """Change the transcription language."""
+        self.language = language_code
+        logger.info(f"Language changed to: {language_code}")
 
     def _load_sound_effects(self) -> dict[str, np.ndarray | None]:
         """

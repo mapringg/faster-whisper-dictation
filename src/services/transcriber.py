@@ -83,9 +83,16 @@ class GroqTranscriber:
             try:
                 with open(temp_filename, "rb") as audio_file:
                     files = {"file": audio_file}
+
+                    # Select appropriate prompt based on language
+                    if language == "th":
+                        prompt = "ถอดข้อความเสียงนี้ซึ่งอาจมีการสนทนาทั่วไปเกี่ยวกับชีวิตประจำวัน บทสนทนา หรือเนื้อหาทั่วไป ใช้คำศัพท์ที่เหมาะสม"
+                    else:  # Default to English software development focus
+                        prompt = "Transcribe this audio, which may contain technical discussions related to software development, programming languages, APIs, and system architecture. Use precise terminology where appropriate."
+
                     data = {
                         "model": self.model,
-                        "prompt": "Transcribe this audio, which may contain technical discussions related to software development, programming languages, APIs, and system architecture. Use precise terminology where appropriate.",
+                        "prompt": prompt,
                         "temperature": 0.0,
                     }
 
@@ -355,9 +362,16 @@ class OpenAITranscriber:
             try:
                 with open(temp_filename, "rb") as audio_file:
                     files = {"file": audio_file}
+
+                    # Select appropriate prompt based on language
+                    if language == "th":
+                        prompt = "ถอดข้อความเสียงนี้ซึ่งอาจมีการสนทนาทั่วไปเกี่ยวกับชีวิตประจำวัน บทสนทนา หรือเนื้อหาทั่วไป ใช้คำศัพท์ที่เหมาะสม"
+                    else:  # Default to English software development focus
+                        prompt = "Transcribe this audio, which may contain technical discussions related to software development, programming languages, APIs, and system architecture. Use precise terminology where appropriate."
+
                     data = {
                         "model": self.model,
-                        "prompt": "Transcribe this audio, which may contain technical discussions related to software development, programming languages, APIs, and system architecture. Use precise terminology where appropriate.",
+                        "prompt": prompt,
                         "temperature": 0.0,
                     }
 
