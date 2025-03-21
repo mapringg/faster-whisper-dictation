@@ -28,9 +28,13 @@ class App:
         """
         self.args = args
         self.language = args.language
-        self.timer = None
+        self.timer_active = threading.Event()
         self.last_state_change = 0
         self.state_change_delay = 0.5  # Minimum delay between state changes in seconds
+
+        # Start timer monitoring thread
+        self.timer_thread = threading.Thread(target=self._timer_loop, daemon=True)
+        self.timer_thread.start()
         self.enable_sounds = args.enable_sounds  # Store the sound enable flag
 
         # Initialize state machine
@@ -173,6 +177,19 @@ class App:
             self.status_icon.update_state(StatusIconState.ERROR)
             self.m.to_READY()
 
+    def _timer_loop(self) -> None:
+        """Continuous timer monitoring loop."""
+        while True:
+            self.timer_active.wait()
+            start_time = time.time()
+            while time.time() - start_time < self.args.max_time:
+                if not self.timer_active.is_set():
+                    break
+                time.sleep(0.1)  # Precise timeout checking
+            if self.timer_active.is_set():
+                self.timer_stop()
+            self.timer_active.clear()
+
     def _can_change_state(self) -> bool:
         """
         Check if state change is allowed based on rate limiting.
@@ -223,8 +240,7 @@ class App:
 
                 # Start recording timer if max time specified
                 if self.args.max_time:
-                    self.timer = threading.Timer(self.args.max_time, self.timer_stop)
-                    self.timer.start()
+                    self.timer_active.set()
 
                 self.m.start_recording(language=self.language)
                 self.last_state_change = time.time()
@@ -250,9 +266,7 @@ class App:
                 self.recorder.stop()
 
                 # Cancel timer if running
-                if self.timer is not None:
-                    self.timer.cancel()
-                    self.timer = None
+                self.timer_active.clear()
 
                 self.beep("finish_recording", wait=False)
                 self.last_state_change = time.time()
@@ -280,9 +294,7 @@ class App:
                 self.recorder.stop()
 
                 # Cancel timer if running
-                if self.timer is not None:
-                    self.timer.cancel()
-                    self.timer = None
+                self.timer_active.clear()
 
                 self.beep("cancel_recording", wait=False)
 
