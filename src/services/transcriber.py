@@ -357,7 +357,8 @@ class OpenAITranscriber:
                     files = {"file": audio_file}
                     data = {
                         "model": self.model,
-                        "response_format": "json",
+                        "prompt": "Transcribe this audio, which may contain technical discussions related to software development, programming languages, APIs, and system architecture. Use precise terminology where appropriate.",
+                        "temperature": 0.0,
                     }
 
                     if language and isinstance(language, str):
