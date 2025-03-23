@@ -191,16 +191,95 @@ class App:
         # Perform any necessary cleanup
         self._cleanup_resources()
 
-        # Signal main thread to exit
-        # This is handled differently depending on the platform
-        # For GUI frameworks, we would use their quit mechanism
-        # For our command-line app, we'll use a controlled exit
+        # Platform-specific service management
+        import platform
+        import subprocess
         import os
-        import signal
+        import sys
+        import shutil
+        import time
 
-        # Send SIGINT to our own process for a controlled exit
-        # This allows any registered signal handlers to run
-        os.kill(os.getpid(), signal.SIGINT)
+        system = platform.system()
+        
+        # Create a marker file to indicate user-initiated exit (used by run.sh)
+        # Creating this BEFORE stopping the service ensures run.sh won't restart
+        try:
+            logger.info("Creating exit marker file")
+            with open("/tmp/dictation_user_exit", "w") as f:
+                f.write("1")
+        except Exception as e:
+            logger.error(f"Failed to create exit marker file: {e}")
+        
+        # On macOS, unload the LaunchAgent
+        if system == "Darwin":
+            try:
+                logger.info("Attempting to unload macOS LaunchAgent")
+                # Use full path expansion for home directory
+                home_dir = os.path.expanduser("~")
+                plist_path = os.path.join(home_dir, "Library/LaunchAgents/com.user.dictation.plist")
+                
+                # Use subprocess with expanded path, not shell=True
+                subprocess.run(
+                    ["launchctl", "unload", plist_path],
+                    check=False,
+                    capture_output=True
+                )
+                
+                # Verify the service is unloaded
+                result = subprocess.run(
+                    ["launchctl", "list", "com.user.dictation"],
+                    check=False,
+                    capture_output=True
+                )
+                
+                if result.returncode != 0:
+                    logger.info("LaunchAgent successfully unloaded")
+                else:
+                    logger.warning("LaunchAgent may still be loaded")
+                    
+            except Exception as e:
+                logger.error(f"Failed to unload LaunchAgent: {e}")
+        
+        # On Linux with systemd, try to stop the user service
+        elif os.path.exists("/etc/debian_version") or os.path.exists("/etc/linuxmint/info"):
+            if shutil.which("systemctl"):
+                try:
+                    logger.info("Attempting to stop systemd user service")
+                    subprocess.run(
+                        ["systemctl", "--user", "stop", "dictation.service"],
+                        check=False,
+                        capture_output=True
+                    )
+                    
+                    # Verify the service is stopped
+                    result = subprocess.run(
+                        ["systemctl", "--user", "is-active", "dictation.service"],
+                        check=False,
+                        capture_output=True
+                    )
+                    
+                    if b"inactive" in result.stdout or b"failed" in result.stdout:
+                        logger.info("Systemd service successfully stopped")
+                    else:
+                        logger.warning("Systemd service may still be running")
+                        
+                except Exception as e:
+                    logger.error(f"Failed to stop systemd service: {e}")
+        
+        # Make sure any file operations have completed
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            pass
+            
+        # Small delay to ensure subprocess operations and file writes complete
+        time.sleep(0.5)
+            
+        logger.info("Exiting application completely")
+        # Use os._exit to force immediate termination of the process
+        # This is needed because regular sys.exit() might not work if we're in a daemon thread
+        os._exit(0)
 
     def _toggle_sounds(self, enabled: bool):
         """Toggle sound effects on/off."""

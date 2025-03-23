@@ -440,10 +440,26 @@ class StatusIcon:
 
     def _exit(self):
         """Handle exit from the menu."""
+        logger.info("Exit selected from status icon menu")
+        # Stop animation thread first
         self._stop_animation()
+        
+        # Stop icon if possible (for non-macOS platforms)
+        try:
+            if self._icon and platform.system() != "Darwin":
+                logger.info("Stopping icon directly")
+                # This won't work on macOS, but helps on other platforms
+                self._icon.stop()
+        except Exception as e:
+            logger.warning(f"Failed to stop icon directly: {e}")
+        
+        # Call the exit callback last
         if self.on_exit:
+            logger.info("Calling application exit handler")
             self.on_exit()
-        return True  # This tells pystray to exit
+        
+        # This tells pystray to exit (though it may not take effect on all platforms)
+        return True
 
     def _run_animation(self):
         """Run the animation loop in a separate thread."""
@@ -662,38 +678,59 @@ class StatusIcon:
 
     def stop(self):
         """Clean up resources when stopping the status icon."""
+        logger.info("Stopping status icon")
+        
         with self._icon_lock:
             # First stop the animation thread
             self._animation_running = False
             if self._animation_thread and self._animation_thread.is_alive():
                 try:
+                    logger.info("Stopping animation thread")
                     self._animation_thread.join(timeout=1.0)
-                    logger.info("Animation thread joined successfully")
+                    if not self._animation_thread.is_alive():
+                        logger.info("Animation thread joined successfully")
+                    else:
+                        logger.warning("Animation thread did not stop within timeout")
                 except Exception as e:
                     logger.error(f"Error joining animation thread: {e}")
 
             # Clear animation frame cache to free memory
+            logger.info("Clearing animation frames")
             for state in list(self._animation_frames.keys()):
                 self._animation_frames[state] = []
 
-            # Clean up the icon
+            # Clean up the icon - platform specific handling
+            global _global_icon
             if self._icon:
                 try:
-                    self._icon.stop()
-                    logger.info("Icon stopped successfully")
+                    logger.info("Stopping icon instance")
+                    # On macOS, we may not be able to stop the icon if it's running in the main thread
+                    if platform.system() != "Darwin":
+                        self._icon.stop()
+                        logger.info("Icon stopped successfully")
+                    else:
+                        # On macOS, we can sometimes remove the reference without calling stop
+                        # since the icon will be exited by the main thread
+                        logger.info("Skipping icon.stop() on macOS")
                 except Exception as e:
                     logger.error(f"Error stopping icon: {e}")
 
             # Reset variables
             self._icon = None
+            _global_icon = None  # Clear global reference too
             self._is_initialized = False
             self._current_frame = 0
 
             # Force garbage collection to clean up any lingering references
             import gc
+            import time
 
+            # Run garbage collection twice to ensure all references are cleared
             gc.collect()
-            logger.info("Garbage collection performed during status icon cleanup")
+            time.sleep(0.1)  # Brief pause to allow OS to process any pending operations
+            gc.collect()
+            
+            logger.info("Status icon cleanup completed successfully")
 
     def _validate_callback(self, callback: Callable, name: str) -> bool:
         """
@@ -798,6 +835,15 @@ def run_icon_on_macos():
     if _global_icon and platform.system() == "Darwin":
         try:
             logger.info("Running status icon on main thread (macOS)")
+            # Run the icon, which will block until icon.stop() is called
+            # or until the menu's exit function returns True
             _global_icon.run()
+            logger.info("Status icon main thread loop exited")
+        except KeyboardInterrupt:
+            logger.info("Status icon interrupted by keyboard")
         except Exception as e:
             logger.error(f"Error running icon on main thread: {e}")
+        finally:
+            # Clean up global reference to prevent memory leaks
+            _global_icon = None
+            logger.info("Status icon global reference cleared")
