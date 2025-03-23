@@ -270,33 +270,32 @@ class StatusIcon:
         """Create the right-click menu for the icon."""
         sound_text = "Enable Sounds" if not self._sounds_enabled else "Disable Sounds"
 
-        menu_items = [
-            MenuItem(lambda _: self._get_menu_title(), None, enabled=False),
-            Menu.SEPARATOR,
-        ]
-
-        # Add sound toggle option if callback is set
-        if self._sound_toggle_callback:
-            menu_items.append(MenuItem(sound_text, self._toggle_sounds))
-            menu_items.append(Menu.SEPARATOR)
+        menu_items = []
 
         # Add transcriber selection if callback is set
         if self._transcriber_callback:
             # Add transcriber header
             menu_items.append(
                 MenuItem(
-                    f"Transcriber: {self._transcribers.get(self._current_transcriber, 'Unknown')}",
+                    "Transcriber",
                     None,
                     enabled=False,
                 )
             )
 
-            # Add transcriber options with checkmark as suffix
-            suffix_openai = " ✓" if self._current_transcriber == "openai" else ""
-            suffix_groq = " ✓" if self._current_transcriber == "groq" else ""
-
-            menu_items.append(MenuItem(f"OpenAI{suffix_openai}", self._select_openai))
-            menu_items.append(MenuItem(f"Groq{suffix_groq}", self._select_groq))
+            # Add transcriber options with non-shifting prefix checkmark
+            menu_items.append(
+                MenuItem(
+                    f"{('✓' if self._current_transcriber == 'openai' else '   ')} OpenAI",
+                    self._select_openai,
+                )
+            )
+            menu_items.append(
+                MenuItem(
+                    f"{('✓' if self._current_transcriber == 'groq' else '   ')} Groq",
+                    self._select_groq,
+                )
+            )
 
             menu_items.append(Menu.SEPARATOR)
 
@@ -305,20 +304,31 @@ class StatusIcon:
             # Add language header
             menu_items.append(
                 MenuItem(
-                    f"Language: {self._languages.get(self._current_language, 'Unknown')}",
+                    "Language",
                     None,
                     enabled=False,
                 )
             )
 
-            # Add language options with checkmark as suffix
-            suffix_en = " ✓" if self._current_language == "en" else ""
-            suffix_th = " ✓" if self._current_language == "th" else ""
-
-            menu_items.append(MenuItem(f"English{suffix_en}", self._select_english))
-            menu_items.append(MenuItem(f"Thai{suffix_th}", self._select_thai))
+            # Add language options with non-shifting prefix checkmark
+            menu_items.append(
+                MenuItem(
+                    f"{('✓' if self._current_language == 'en' else '   ')} English",
+                    self._select_english,
+                )
+            )
+            menu_items.append(
+                MenuItem(
+                    f"{('✓' if self._current_language == 'th' else '   ')} Thai",
+                    self._select_thai,
+                )
+            )
 
             menu_items.append(Menu.SEPARATOR)
+
+        # Add sound toggle option just before exit
+        if self._sound_toggle_callback:
+            menu_items.append(MenuItem(sound_text, self._toggle_sounds))
 
         menu_items.append(MenuItem("Exit", self._exit))
 
