@@ -31,6 +31,7 @@ class App:
         self.timer_active = threading.Event()
         self.last_state_change = 0
         self.state_change_delay = 0.5  # Minimum delay between state changes in seconds
+        self.status_icon_lock = threading.Lock()  # Add lock for status icon operations
 
         # Start timer monitoring thread
         self.timer_thread = threading.Thread(target=self._timer_loop, daemon=True)
@@ -55,21 +56,16 @@ class App:
 
         self.replayer = KeyboardReplayer(self.m.finish_replaying)
 
-        # Initialize status icon
-        self.status_icon = StatusIcon(on_exit=self._exit_app)
-
-        # Connect status icon sound toggle to the app's sound setting
-        self.status_icon.set_sound_toggle_callback(
-            self._toggle_sounds, self.enable_sounds
-        )
-
-        # Connect status icon language selector to the app's language setting
-        self.status_icon.set_language_callback(self._change_language, self.language)
-
-        # Connect status icon transcriber selector to the app's transcriber setting
-        self.status_icon.set_transcriber_callback(
-            self._change_transcriber, self.args.transcriber
-        )
+        # Initialize status icon with lock protection
+        with self.status_icon_lock:
+            self.status_icon = StatusIcon(on_exit=self._exit_app)
+            self.status_icon.set_sound_toggle_callback(
+                self._toggle_sounds, self.enable_sounds
+            )
+            self.status_icon.set_language_callback(self._change_language, self.language)
+            self.status_icon.set_transcriber_callback(
+                self._change_transcriber, self.args.transcriber
+            )
 
         # Configure state machine callbacks that combine functionality
         self.m.on_enter_READY(self._on_enter_ready)
@@ -82,37 +78,35 @@ class App:
 
     def _on_enter_ready(self, *_):
         """Callback that runs when entering READY state."""
-        # Get the platform-specific cancel key name for the message
-        if platform.system() == "Darwin":
-            cancel_key_name = "right option"
-        else:
-            cancel_key_name = "right alt"
+        with self.status_icon_lock:
+            # Get the platform-specific cancel key name for the message
+            if platform.system() == "Darwin":
+                cancel_key_name = "right option"
+            else:
+                cancel_key_name = "right alt"
 
-        logger.info(
-            f"Double tap {self.args.trigger_key} to start recording. "
-            f"Tap once to stop recording. "
-            f"Double tap {cancel_key_name} to cancel recording."
-        )
-        self.status_icon.update_state(StatusIconState.READY)
+            logger.info(
+                f"Double tap {self.args.trigger_key} to start recording. "
+                f"Tap once to stop recording. "
+                f"Double tap {cancel_key_name} to cancel recording."
+            )
+            self.status_icon.update_state(StatusIconState.READY)
 
     def _on_enter_recording(self, event):
         """Handle entering RECORDING state."""
-        logger.info("Recording started")
-        self.status_icon.update_state(StatusIconState.RECORDING)
-        # Start the actual recording
-        self._safe_start_recording(event)
+        with self.status_icon_lock:
+            logger.info("Recording started")
+            self.status_icon.update_state(StatusIconState.RECORDING)
+            # Start the actual recording
+            self._safe_start_recording(event)
 
     def _on_enter_transcribing(self, event):
         """Handle entering TRANSCRIBING state."""
-        logger.info("Transcribing audio...")
-        self.status_icon.update_state(StatusIconState.TRANSCRIBING)
         # Start the actual transcription
         self._safe_start_transcription(event)
 
     def _on_enter_replaying(self, event):
         """Handle entering REPLAYING state."""
-        logger.info("Replaying transcribed text...")
-        self.status_icon.update_state(StatusIconState.REPLAYING)
         # Start the actual replaying
         self._safe_start_replay(event)
 
@@ -199,19 +193,33 @@ class App:
     def _safe_start_transcription(self, event) -> None:
         """Wrapper for transcription start with error handling."""
         try:
+            # Update status icon first
+            with self.status_icon_lock:
+                logger.info("Transcribing audio...")
+                self.status_icon.update_state(StatusIconState.TRANSCRIBING)
+
+            # Then start transcription (which will trigger state transition when done)
             self.transcriber.transcribe(event)
         except Exception as e:
             logger.error(f"Error starting transcription: {str(e)}")
-            self.status_icon.update_state(StatusIconState.ERROR)
+            with self.status_icon_lock:
+                self.status_icon.update_state(StatusIconState.ERROR)
             self.m.to_READY()
 
     def _safe_start_replay(self, event) -> None:
         """Wrapper for replay start with error handling."""
         try:
+            # Update status icon first
+            with self.status_icon_lock:
+                logger.info("Replaying transcribed text...")
+                self.status_icon.update_state(StatusIconState.REPLAYING)
+
+            # Then start replay (which will trigger state transition when done)
             self.replayer.replay(event)
         except Exception as e:
             logger.error(f"Error starting replay: {str(e)}")
-            self.status_icon.update_state(StatusIconState.ERROR)
+            with self.status_icon_lock:
+                self.status_icon.update_state(StatusIconState.ERROR)
             self.m.to_READY()
 
     def _timer_loop(self) -> None:

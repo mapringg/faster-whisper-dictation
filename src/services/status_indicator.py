@@ -34,12 +34,13 @@ class StatusIcon:
         Args:
             on_exit: Optional callback to run when exit is selected from the menu
         """
-        self.state = StatusIconState.READY
+        self.on_exit = on_exit
+        self._current_state = StatusIconState.READY
         self._icon = None
-        self._icon_thread = None
         self._animation_thread = None
         self._animation_running = False
-        self._on_exit = on_exit
+        self._icon_lock = threading.Lock()
+        self._is_initialized = False
         self._sound_toggle_callback = None
         self._sounds_enabled = False
         self._language_callback = None
@@ -201,10 +202,10 @@ class StatusIcon:
 
     def _get_icon_image(self):
         """Get the current frame of the animation for the current state."""
-        frames = self._animation_frames.get(self.state, [])
+        frames = self._animation_frames.get(self._current_state, [])
         if not frames:
             # Fallback to static image if no animation frames
-            color = self._state_colors.get(self.state, (100, 100, 100))
+            color = self._state_colors.get(self._current_state, (100, 100, 100))
             return self._create_static_image(color)
 
         if len(frames) == 1:
@@ -224,7 +225,7 @@ class StatusIcon:
 
     def _get_menu_title(self):
         """Get the current state description for the menu."""
-        return f"Status: {self._state_descriptions.get(self.state, 'Unknown')}"
+        return f"Status: {self._state_descriptions.get(self._current_state, 'Unknown')}"
 
     def _select_english(self):
         """Select English language."""
@@ -347,8 +348,8 @@ class StatusIcon:
     def _exit(self):
         """Handle exit from the menu."""
         self._stop_animation()
-        if self._on_exit:
-            self._on_exit()
+        if self.on_exit:
+            self.on_exit()
         return True  # This tells pystray to exit
 
     def _run_animation(self):
@@ -388,8 +389,8 @@ class StatusIcon:
 
     def start(self):
         """Start the status icon in a separate thread."""
-        if self._icon_thread and self._icon_thread.is_alive():
-            logger.warning("Status icon thread is already running")
+        if self._icon:
+            logger.warning("Status icon is already running")
             return
 
         # Create icon in the current thread (which should be the main thread)
@@ -427,18 +428,61 @@ class StatusIcon:
                 except Exception as e:
                     logger.error(f"Error in status icon thread: {e}")
 
-            self._icon_thread = threading.Thread(target=run_icon, daemon=True)
-            self._icon_thread.start()
+            self._animation_thread = threading.Thread(target=run_icon, daemon=True)
+            self._animation_thread.start()
             logger.info("Status icon started in thread")
 
     def update_state(self, new_state: StatusIconState):
-        """
-        Update the icon to reflect a new state.
+        """Update the status icon state and appearance."""
+        with self._icon_lock:
+            if self._current_state == new_state:
+                return  # No state change needed
 
-        Args:
-            new_state: The new state to display
-        """
-        self.state = new_state
+            self._current_state = new_state
+            if self._icon is not None:
+                self._update_icon_appearance()
+            elif not self._is_initialized:
+                self._initialize_icon()
+
+    def _initialize_icon(self):
+        """Initialize the status icon only if not already initialized."""
+        with self._icon_lock:
+            if self._is_initialized:
+                return
+
+            try:
+                # Create the icon and set up the menu
+                self._setup_icon()
+                self._is_initialized = True
+                logger.info("Status icon initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize status icon: {str(e)}")
+                self._is_initialized = False
+
+    def _setup_icon(self):
+        """Set up the status icon and menu."""
+        if self._icon is not None:
+            return
+
+        try:
+            # Create icon instance
+            self._icon = Icon(
+                name="Dictation Assistant",
+                icon=self._get_icon_image(),
+                title=self._get_menu_title(),
+                menu=self._setup_menu(),
+            )
+
+            # Start animation
+            self._start_animation()
+
+            logger.info("Status icon created (will run on main thread)")
+        except Exception as e:
+            logger.error(f"Error setting up status icon: {str(e)}")
+            self._icon = None
+
+    def _update_icon_appearance(self):
+        """Update the icon appearance based on the current state."""
         if self._icon:
             try:
                 # Reset frame counter for new animation
@@ -448,30 +492,26 @@ class StatusIcon:
                 self._icon.icon = self._get_icon_image()
 
                 # Update tooltip/title
-                description = self._state_descriptions.get(new_state, "Unknown state")
+                description = self._state_descriptions.get(
+                    self._current_state, "Unknown state"
+                )
                 self._icon.title = f"Dictation: {description}"
 
                 # Update menu (will refresh on next open)
                 self._icon.menu = self._setup_menu()
 
-                logger.info(f"Updated status icon to: {new_state.name}")
+                logger.info(f"Updated status icon to: {self._current_state.name}")
             except Exception as e:
                 logger.error(f"Failed to update status icon: {e}")
 
     def stop(self):
-        """Stop the status icon."""
-        self._stop_animation()
-
-        if self._icon:
-            try:
-                self._icon.stop()
-                logger.info("Status icon stopped")
-            except Exception as e:
-                logger.error(f"Error stopping status icon: {e}")
-
-        # Wait for thread to end
-        if self._icon_thread and self._icon_thread.is_alive():
-            self._icon_thread.join(timeout=1.0)
+        """Clean up resources when stopping the status icon."""
+        with self._icon_lock:
+            self._animation_running = False
+            if self._animation_thread and self._animation_thread.is_alive():
+                self._animation_thread.join()
+            self._icon = None
+            self._is_initialized = False
 
     def set_sound_toggle_callback(
         self, callback: Callable[[bool], None], initial_state: bool = False
