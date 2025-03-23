@@ -361,80 +361,27 @@ class OpenAITranscriber(BaseTranscriber):
         Returns:
             str: File extension
         """
-        return ".mp3"
+        return ".wav"
 
     def save_audio(self, audio_data: np.ndarray, filename: str) -> bool:
         """
-        Save audio data to an MP3 file (lossy compression, smaller than WAV).
-        OpenAI recommends MP3 format for optimal performance.
+        Save audio data directly to a WAV file.
+        OpenAI supports WAV format for transcriptions.
 
         Args:
             audio_data: Numpy array containing audio samples
-            filename: Path to save the MP3 file
+            filename: Path to save the WAV file
 
         Returns:
             bool: True if successful, False otherwise
         """
         try:
-            # First save as WAV (since soundfile doesn't support MP3 directly)
-            wav_filename = filename + ".wav"
-            sf.write(wav_filename, audio_data, 16000, format="WAV", subtype="PCM_16")
-
-            # Convert to MP3 using ffmpeg
-            try:
-                # First try the system-wide ffmpeg (typical on Linux)
-                ffmpeg_paths = ["ffmpeg"]
-
-                # On macOS, also check the Homebrew path
-                if platform.system() == "Darwin":
-                    ffmpeg_paths.append("/opt/homebrew/bin/ffmpeg")
-
-                ffmpeg_found = False
-                for ffmpeg_path in ffmpeg_paths:
-                    try:
-                        # Test if this ffmpeg path works
-                        subprocess.run(
-                            [ffmpeg_path, "-version"], check=True, capture_output=True
-                        )
-                        ffmpeg_found = True
-
-                        # Use the working ffmpeg path for conversion
-                        subprocess.run(
-                            [
-                                ffmpeg_path,
-                                "-y",  # Overwrite output file if it exists
-                                "-i",
-                                wav_filename,
-                                "-vn",  # No video
-                                "-ar",
-                                "16000",  # Sample rate
-                                "-ac",
-                                "1",  # Mono
-                                "-b:a",
-                                "32k",  # Bitrate (adjust as needed for quality vs size)
-                                filename,
-                            ],
-                            check=True,
-                            capture_output=True,
-                        )
-                        break
-                    except (subprocess.CalledProcessError, FileNotFoundError):
-                        continue
-
-                if not ffmpeg_found:
-                    logger.error("FFmpeg not found in system PATH or Homebrew location")
-                    return False
-
-                # Remove temporary WAV file
-                os.unlink(wav_filename)
-                return True
-
-            except subprocess.CalledProcessError as e:
-                logger.error(f"FFmpeg conversion failed: {e.stderr.decode()}")
-                return False
-
+            # Save directly as WAV file at 16kHz
+            sf.write(filename, audio_data, 16000, format="WAV", subtype="PCM_16")
+            logger.info(f"Successfully saved audio as WAV to {filename}")
+            return True
         except Exception as e:
-            logger.error(f"Error saving audio: {str(e)}")
+            logger.error(f"Error saving audio as WAV: {str(e)}")
             return False
 
     def make_api_request(
