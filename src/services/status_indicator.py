@@ -44,6 +44,12 @@ class StatusIcon:
         self._sounds_enabled = False
         self._language_callback = None
         self._current_language = "en"  # Default to English
+        self._transcriber_callback = None
+        self._current_transcriber = "openai"  # Default to OpenAI
+        self._transcribers = {
+            "openai": "OpenAI",
+            "groq": "Groq",
+        }
         self._state_colors = {
             StatusIconState.READY: (0, 150, 0),  # Green
             StatusIconState.RECORDING: (200, 0, 0),  # Red
@@ -230,6 +236,36 @@ class StatusIcon:
         self._select_language("th")
         return False  # Don't close the menu
 
+    def _select_openai(self):
+        """Select OpenAI transcriber."""
+        self._select_transcriber("openai")
+        return False  # Don't close the menu
+
+    def _select_groq(self):
+        """Select Groq transcriber."""
+        self._select_transcriber("groq")
+        return False  # Don't close the menu
+
+    def _select_language(self, language_code):
+        """Handle language selection from the menu."""
+        if self._language_callback and language_code != self._current_language:
+            self._current_language = language_code
+            self._language_callback(language_code)
+            # Update menu
+            if self._icon:
+                self._icon.menu = self._setup_menu()
+        return False  # Don't close the menu
+
+    def _select_transcriber(self, transcriber_id):
+        """Handle transcriber selection from the menu."""
+        if self._transcriber_callback and transcriber_id != self._current_transcriber:
+            self._current_transcriber = transcriber_id
+            self._transcriber_callback(transcriber_id)
+            # Update menu
+            if self._icon:
+                self._icon.menu = self._setup_menu()
+        return False  # Don't close the menu
+
     def _setup_menu(self):
         """Create the right-click menu for the icon."""
         sound_text = "Enable Sounds" if not self._sounds_enabled else "Disable Sounds"
@@ -242,6 +278,26 @@ class StatusIcon:
         # Add sound toggle option if callback is set
         if self._sound_toggle_callback:
             menu_items.append(MenuItem(sound_text, self._toggle_sounds))
+            menu_items.append(Menu.SEPARATOR)
+
+        # Add transcriber selection if callback is set
+        if self._transcriber_callback:
+            # Add transcriber header
+            menu_items.append(
+                MenuItem(
+                    f"Transcriber: {self._transcribers.get(self._current_transcriber, 'Unknown')}",
+                    None,
+                    enabled=False,
+                )
+            )
+
+            # Add transcriber options with checkmark as suffix
+            suffix_openai = " ✓" if self._current_transcriber == "openai" else ""
+            suffix_groq = " ✓" if self._current_transcriber == "groq" else ""
+
+            menu_items.append(MenuItem(f"OpenAI{suffix_openai}", self._select_openai))
+            menu_items.append(MenuItem(f"Groq{suffix_groq}", self._select_groq))
+
             menu_items.append(Menu.SEPARATOR)
 
         # Add language selection if callback is set
@@ -273,16 +329,6 @@ class StatusIcon:
         if self._sound_toggle_callback:
             self._sounds_enabled = not self._sounds_enabled
             self._sound_toggle_callback(self._sounds_enabled)
-            # Update menu
-            if self._icon:
-                self._icon.menu = self._setup_menu()
-        return False  # Don't close the menu
-
-    def _select_language(self, language_code):
-        """Handle language selection from the menu."""
-        if self._language_callback and language_code != self._current_language:
-            self._current_language = language_code
-            self._language_callback(language_code)
             # Update menu
             if self._icon:
                 self._icon.menu = self._setup_menu()
@@ -446,6 +492,23 @@ class StatusIcon:
         self._language_callback = callback
         if initial_language in self._languages:
             self._current_language = initial_language
+        # Update menu if icon already exists
+        if self._icon:
+            self._icon.menu = self._setup_menu()
+
+    def set_transcriber_callback(
+        self, callback: Callable[[str], None], initial_transcriber: str = "openai"
+    ):
+        """
+        Set callback for changing transcriber.
+
+        Args:
+            callback: Function to call when transcriber is changed (receives transcriber id)
+            initial_transcriber: Initial transcriber id
+        """
+        self._transcriber_callback = callback
+        if initial_transcriber in self._transcribers:
+            self._current_transcriber = initial_transcriber
         # Update menu if icon already exists
         if self._icon:
             self._icon.menu = self._setup_menu()

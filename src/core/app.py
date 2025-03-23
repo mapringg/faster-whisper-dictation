@@ -66,6 +66,11 @@ class App:
         # Connect status icon language selector to the app's language setting
         self.status_icon.set_language_callback(self._change_language, self.language)
 
+        # Connect status icon transcriber selector to the app's transcriber setting
+        self.status_icon.set_transcriber_callback(
+            self._change_transcriber, self.args.transcriber
+        )
+
         # Configure state machine callbacks that combine functionality
         self.m.on_enter_READY(self._on_enter_ready)
         self.m.on_enter_RECORDING(self._on_enter_recording)
@@ -135,6 +140,30 @@ class App:
         """Change the transcription language."""
         self.language = language_code
         logger.info(f"Language changed to: {language_code}")
+
+    def _change_transcriber(self, transcriber_id: str):
+        """Change the transcription service."""
+        try:
+            # Create new transcriber instance with appropriate model name
+            if transcriber_id == "openai":
+                model_name = "gpt-4o-transcribe"  # OpenAI specific model
+                self.transcriber = OpenAITranscriber(
+                    self.m.finish_transcribing, model_name
+                )
+            else:  # groq
+                model_name = "whisper-large-v3"  # Groq specific model
+                self.transcriber = GroqTranscriber(
+                    self.m.finish_transcribing, model_name
+                )
+            # Update the stored model name
+            self.args.model_name = model_name
+            self.args.transcriber = transcriber_id
+            logger.info(
+                f"Transcriber changed to: {transcriber_id} with model: {model_name}"
+            )
+        except Exception as e:
+            logger.error(f"Error changing transcriber: {str(e)}")
+            self.status_icon.update_state(StatusIconState.ERROR)
 
     def _load_sound_effects(self) -> dict[str, np.ndarray | None]:
         """
