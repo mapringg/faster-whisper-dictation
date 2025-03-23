@@ -438,11 +438,28 @@ class StatusIcon:
             if self._current_state == new_state:
                 return  # No state change needed
 
+            logger.info(
+                f"Updating status icon state from {self._current_state} to {new_state}"
+            )
             self._current_state = new_state
-            if self._icon is not None:
-                self._update_icon_appearance()
-            elif not self._is_initialized:
-                self._initialize_icon()
+
+            # On macOS, we need to be careful about icon updates
+            if platform.system() == "Darwin":
+                if self._icon is not None:
+                    try:
+                        # Update icon appearance without recreating the icon
+                        self._icon.icon = self._get_icon_image()
+                        self._icon.title = f"Dictation: {self._state_descriptions.get(new_state, 'Unknown state')}"
+                        self._icon.menu = self._setup_menu()
+                        logger.info(f"Updated macOS status icon to: {new_state.name}")
+                    except Exception as e:
+                        logger.error(f"Failed to update macOS status icon: {e}")
+            else:
+                # For other platforms, we can recreate the icon if needed
+                if self._icon is not None:
+                    self._update_icon_appearance()
+                elif not self._is_initialized:
+                    self._initialize_icon()
 
     def _initialize_icon(self):
         """Initialize the status icon only if not already initialized."""
