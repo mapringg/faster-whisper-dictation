@@ -1,29 +1,53 @@
 import logging
 import threading
 import time
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from pynput import keyboard
 
 logger = logging.getLogger(__name__)
 
+# Type definitions
+T = TypeVar("T")
+KeyboardCallback = Callable[[], None]
+Event = Any  # Type for state machine event
+
 
 class KeyboardReplayer:
     """Handles typing out transcribed text with rate limiting and error handling."""
 
-    def __init__(self, callback):
+    # Class constants
+    DEFAULT_TYPING_DELAY = 0.0025  # Delay between keystrokes in seconds
+    DEFAULT_MAX_RETRIES = 3
+    DEFAULT_RETRY_DELAY = 0.1  # Base delay for retries in seconds
+
+    def __init__(
+        self,
+        callback: KeyboardCallback,
+        keyboard_controller: keyboard.Controller | None = None,
+        typing_delay: float = DEFAULT_TYPING_DELAY,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        retry_delay: float = DEFAULT_RETRY_DELAY,
+    ):
         """
         Initialize the replayer with a callback function.
 
         Args:
             callback: Function to call after typing is complete
+            keyboard_controller: Optional keyboard controller for dependency injection
+            typing_delay: Delay between keystrokes in seconds
+            max_retries: Maximum number of retry attempts for typing errors
+            retry_delay: Base delay between retry attempts in seconds
         """
         self.callback = callback
-        self.kb = keyboard.Controller()
-        self.typing_delay = 0.0025  # Delay between keystrokes in seconds
-        self.max_retries = 3
+        self.kb = keyboard_controller or keyboard.Controller()
+        self.typing_delay = typing_delay
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
         self.lock = threading.Lock()  # Thread-safe state management
 
-    def _validate_segments(self, segments: list) -> bool:
+    def _validate_segments(self, segments: list[Any]) -> bool:
         """
         Validate the transcription segments.
 
@@ -63,14 +87,16 @@ class KeyboardReplayer:
                     f"Error typing character '{char}' (attempt {attempt + 1}): {str(e)}"
                 )
                 if attempt < self.max_retries - 1:
-                    time.sleep(0.1 * (attempt + 1))
+                    # Use instance variable for retry delay
+                    backoff_delay = self.retry_delay * (attempt + 1)
+                    time.sleep(backoff_delay)
 
         logger.error(
             f"Failed to type character '{char}' after {self.max_retries} attempts"
         )
         return False
 
-    def replay(self, event) -> None:
+    def replay(self, event: Event) -> None:
         """
         Handle the text replay process with error handling and rate limiting.
 
@@ -79,7 +105,7 @@ class KeyboardReplayer:
         """
         logger.info("Starting text replay...")
         segments = event.kwargs.get("segments", [])
-        text_buffer = []
+        text_buffer: list[str] = []
 
         # Validate input segments
         if not self._validate_segments(segments):
@@ -88,6 +114,7 @@ class KeyboardReplayer:
             return
 
         try:
+            # Use context manager for lock
             with self.lock:
                 # Process each segment
                 for segment in segments:
@@ -127,7 +154,7 @@ class KeyboardReplayer:
 class KeyListener:
     """Handles single key press events with error handling and cleanup."""
 
-    def __init__(self, callback, key: str):
+    def __init__(self, callback: KeyboardCallback, key: str):
         """
         Initialize the key listener with callback and key binding.
 
@@ -137,7 +164,7 @@ class KeyListener:
         """
         self.callback = callback
         self.key = key
-        self.listener = None
+        self.listener: keyboard.GlobalHotKeys | None = None
         self.lock = threading.Lock()  # Thread-safe state management
 
     def _validate_key(self) -> bool:
@@ -191,7 +218,18 @@ class KeyListener:
 class DoubleKeyListener:
     """Handles double-click key events with rate limiting and error handling."""
 
-    def __init__(self, activate_callback, deactivate_callback, key=keyboard.Key.cmd_r):
+    # Class constants
+    DEFAULT_DOUBLE_CLICK_THRESHOLD = 0.5  # Seconds between clicks
+    DEFAULT_MIN_PRESS_DURATION = 0.1  # Minimum press duration in seconds
+
+    def __init__(
+        self,
+        activate_callback: KeyboardCallback,
+        deactivate_callback: KeyboardCallback,
+        key: keyboard.Key = keyboard.Key.cmd_r,
+        double_click_threshold: float = DEFAULT_DOUBLE_CLICK_THRESHOLD,
+        min_press_duration: float = DEFAULT_MIN_PRESS_DURATION,
+    ):
         """
         Initialize the double key listener with callbacks and key binding.
 
@@ -199,14 +237,16 @@ class DoubleKeyListener:
             activate_callback: Function to call on double-click
             deactivate_callback: Function to call on single-click
             key: Key to listen for (default: right command key)
+            double_click_threshold: Time window for double-click detection in seconds
+            min_press_duration: Minimum press duration in seconds for debouncing
         """
         self.activate_callback = activate_callback
         self.deactivate_callback = deactivate_callback
         self.key = key
-        self.last_press_time = 0
-        self.double_click_threshold = 0.5  # Seconds between clicks
-        self.min_press_duration = 0.1  # Minimum press duration in seconds
-        self.listener = None
+        self.last_press_time = 0.0
+        self.double_click_threshold = double_click_threshold
+        self.min_press_duration = min_press_duration
+        self.listener: keyboard.Listener | None = None
         self.lock = threading.Lock()  # Thread-safe state management
 
     def _safe_activate(self) -> None:
@@ -223,7 +263,7 @@ class DoubleKeyListener:
         except Exception as e:
             logger.error(f"Error in deactivate callback: {str(e)}")
 
-    def on_press(self, key) -> bool | None:
+    def on_press(self, key: Any) -> bool | None:
         """
         Handle key press events with rate limiting.
 
@@ -231,7 +271,7 @@ class DoubleKeyListener:
             key: The key that was pressed
 
         Returns:
-            bool | None: Return value depends on pynput requirements
+            Optional[bool]: Return value depends on pynput requirements
         """
         if key != self.key:
             return None
@@ -258,7 +298,7 @@ class DoubleKeyListener:
 
         return None
 
-    def on_release(self, key) -> None:
+    def on_release(self, key: Any) -> None:
         """Handle key release events."""
         pass
 

@@ -1,5 +1,6 @@
 import logging
 import threading
+from contextlib import contextmanager
 
 import numpy as np
 import sounddevice as sd
@@ -11,6 +12,51 @@ logger = logging.getLogger(__name__)
 
 class Recorder:
     """Handles audio recording functionality with state management and error handling."""
+
+    @contextmanager
+    def _stream_context(self, input_device):
+        """Context manager for audio stream setup and cleanup."""
+        stream = None
+        try:
+            stream = self._setup_audio_stream(input_device)
+            if stream is not None:
+                try:
+                    logger.info(f"Starting stream with input device: {input_device}")
+                    stream.start()
+                    self.stream = stream  # Store reference in instance
+                    yield stream
+                except sd.PortAudioError as e:
+                    logger.error(f"Failed to start audio stream: {str(e)}")
+                    yield None
+            else:
+                logger.error("Failed to set up audio stream")
+                yield None
+        except Exception as e:
+            logger.error(f"Error in stream setup: {str(e)}")
+            yield None
+        finally:
+            # Always clean up the stream
+            if stream is not None:
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception as e:
+                    logger.error(f"Error closing audio stream: {str(e)}")
+                finally:
+                    self.stream = None
+
+    @contextmanager
+    def _recording_state(self):
+        """Context manager for the recording state."""
+        try:
+            with self.lock:
+                self._cleanup_previous_session()
+                self.recording = True
+                self.frames = []
+            yield
+        finally:
+            with self.lock:
+                self.recording = False
 
     def __init__(self, callback):
         """
@@ -28,19 +74,18 @@ class Recorder:
     def start(self, event) -> None:
         """Start recording in a new thread."""
         logger.info("Starting recording...")
-        with self.lock:
-            self._cleanup_previous_session()
+        # The _recording_state context manager will handle cleanup of previous session
 
         language = event.kwargs.get("language") if hasattr(event, "kwargs") else None
         thread = threading.Thread(target=self._record_impl, args=(language,))
         thread.start()
 
     def stop(self) -> None:
-        """Stop recording and cleanup resources."""
+        """Stop recording."""
         logger.info("Stopping recording...")
         with self.lock:
             self.recording = False
-            self._cleanup_stream()
+        # Stream cleanup is handled by the context manager
 
     def _cleanup_previous_session(self) -> None:
         """Clean up any existing recording session."""
@@ -176,55 +221,41 @@ class Recorder:
             # Refresh audio devices to detect any hardware changes
             refresh_devices()
 
-            # Get and validate input device - done right before starting recording
-            # to ensure we use the most current system default devices
+            # Get and validate input device
             input_device, _ = get_default_devices()
             if input_device is None:
                 logger.error("No default input device available")
                 self.callback(audio=None)
                 return
 
-            # Initialize recording state
-            with self.lock:
-                self.recording = True
-                self.frames = []
+            # Use context managers for recording state and stream management
+            with self._recording_state():
+                with self._stream_context(input_device) as stream:
+                    if stream is None:
+                        self.callback(audio=None)
+                        return
 
-            # Set up and run audio stream
-            self.stream = self._setup_audio_stream(input_device)
-            if self.stream is None:
-                logger.error("Failed to set up audio stream")
-                self.callback(audio=None)
-                return
+                    # Main recording loop
+                    while self.recording:
+                        sd.sleep(100)  # Sleep to prevent busy-waiting
 
-            try:
-                logger.info(f"Starting stream with input device: {input_device}")
-                self.stream.start()
-            except sd.PortAudioError as e:
-                logger.error(f"Failed to start audio stream: {str(e)}")
-                self.callback(audio=None)
-                return
-
-            with self.stream:
-                while self.recording:
-                    sd.sleep(100)  # Sleep to prevent busy-waiting
-
-            # Process and return recorded audio
-            processed_audio = self._process_recorded_audio(language)
-            if processed_audio:
-                audio_data, lang = processed_audio
-                if len(self.frames) == 0:
-                    logger.warning(
-                        "Recording stopped immediately - no audio frames captured"
-                    )
-                    self.callback(audio=None)
+                # Process recorded audio (after stream is closed but while still in recording state)
+                processed_audio = self._process_recorded_audio(language)
+                if processed_audio:
+                    audio_data, lang = processed_audio
+                    if len(self.frames) == 0:
+                        logger.warning(
+                            "Recording stopped immediately - no audio frames captured"
+                        )
+                        self.callback(audio=None)
+                    else:
+                        logger.info(
+                            f"Recording successful with {len(self.frames)} audio frames"
+                        )
+                        self.callback(audio=audio_data, language=lang)
                 else:
-                    logger.info(
-                        f"Recording successful with {len(self.frames)} audio frames"
-                    )
-                    self.callback(audio=audio_data, language=lang)
-            else:
-                logger.warning("No processed audio available after recording")
-                self.callback(audio=None)
+                    logger.warning("No processed audio available after recording")
+                    self.callback(audio=None)
 
         except sd.PortAudioError as e:
             logger.error(f"Audio device error during recording: {str(e)}")
@@ -232,7 +263,3 @@ class Recorder:
         except Exception as e:
             logger.error(f"Unexpected error during recording: {str(e)}")
             self.callback(audio=None)
-        finally:
-            with self.lock:
-                self.recording = False
-                self._cleanup_stream()

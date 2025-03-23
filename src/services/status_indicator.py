@@ -27,6 +27,12 @@ class StatusIconState(Enum):
 class StatusIcon:
     """System tray icon that reflects the application state."""
 
+    # Class constants
+    ICON_WIDTH = 22
+    ICON_HEIGHT = 22
+    ICON_PADDING = 4
+    ANIMATION_SPEED = 0.2
+
     def __init__(self, on_exit: Callable | None = None):
         """
         Initialize the status icon.
@@ -108,19 +114,31 @@ class StatusIcon:
         # Error state (gray X mark)
         self._animation_frames[StatusIconState.ERROR] = [self._create_error_image()]
 
+    def _create_base_image(self) -> Image.Image:
+        """Create a base transparent image for icons."""
+        return Image.new("RGBA", (self.ICON_WIDTH, self.ICON_HEIGHT), (0, 0, 0, 0))
+
     def _create_pulse_animation(self, color, num_frames=6):
         """Create a pulsing animation with varying opacity."""
         frames = []
-        width, height = 22, 22
 
         for i in range(num_frames):
             # Calculate opacity based on sine wave pattern
             factor = 0.5 + 0.5 * (i / (num_frames - 1))  # 0.5 to 1.0 and back
             current_color = (color[0], color[1], color[2], int(255 * factor))
 
-            image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            image = self._create_base_image()
             dc = ImageDraw.Draw(image)
-            dc.ellipse([(4, 4), (width - 4, height - 4)], fill=current_color)
+            dc.ellipse(
+                [
+                    (self.ICON_PADDING, self.ICON_PADDING),
+                    (
+                        self.ICON_WIDTH - self.ICON_PADDING,
+                        self.ICON_HEIGHT - self.ICON_PADDING,
+                    ),
+                ],
+                fill=current_color,
+            )
             frames.append(image)
 
         # Add frames in reverse for smooth pulsing (except last frame to avoid duplication)
@@ -130,18 +148,35 @@ class StatusIcon:
     def _create_blink_animation(self, color, num_frames=4):
         """Create a blinking animation that alternates between full color and transparent."""
         frames = []
-        width, height = 22, 22
 
         # Full color frame
-        image1 = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        image1 = self._create_base_image()
         dc1 = ImageDraw.Draw(image1)
-        dc1.ellipse([(4, 4), (width - 4, height - 4)], fill=color)
+        dc1.ellipse(
+            [
+                (self.ICON_PADDING, self.ICON_PADDING),
+                (
+                    self.ICON_WIDTH - self.ICON_PADDING,
+                    self.ICON_HEIGHT - self.ICON_PADDING,
+                ),
+            ],
+            fill=color,
+        )
 
         # Semi-transparent frame
-        image2 = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        image2 = self._create_base_image()
         dc2 = ImageDraw.Draw(image2)
         transparent_color = (color[0], color[1], color[2], 100)
-        dc2.ellipse([(4, 4), (width - 4, height - 4)], fill=transparent_color)
+        dc2.ellipse(
+            [
+                (self.ICON_PADDING, self.ICON_PADDING),
+                (
+                    self.ICON_WIDTH - self.ICON_PADDING,
+                    self.ICON_HEIGHT - self.ICON_PADDING,
+                ),
+            ],
+            fill=transparent_color,
+        )
 
         # Alternate between frames
         for i in range(num_frames):
@@ -155,15 +190,23 @@ class StatusIcon:
     def _create_spin_animation(self, color, num_frames=8):
         """Create a spinning animation with an arc that rotates."""
         frames = []
-        width, height = 22, 22
 
         for i in range(num_frames):
-            image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            image = self._create_base_image()
             dc = ImageDraw.Draw(image)
 
             # Draw base circle (semi-transparent)
             base_color = (color[0], color[1], color[2], 100)
-            dc.ellipse([(4, 4), (width - 4, height - 4)], fill=base_color)
+            dc.ellipse(
+                [
+                    (self.ICON_PADDING, self.ICON_PADDING),
+                    (
+                        self.ICON_WIDTH - self.ICON_PADDING,
+                        self.ICON_HEIGHT - self.ICON_PADDING,
+                    ),
+                ],
+                fill=base_color,
+            )
 
             # Draw spinning arc
             start_angle = (i * 45) % 360
@@ -174,7 +217,13 @@ class StatusIcon:
                 start_angle, end_angle = end_angle, start_angle
 
             dc.pieslice(
-                [(4, 4), (width - 4, height - 4)],
+                [
+                    (self.ICON_PADDING, self.ICON_PADDING),
+                    (
+                        self.ICON_WIDTH - self.ICON_PADDING,
+                        self.ICON_HEIGHT - self.ICON_PADDING,
+                    ),
+                ],
                 start=start_angle,
                 end=end_angle,
                 fill=color,
@@ -185,18 +234,41 @@ class StatusIcon:
 
     def _create_error_image(self):
         """Create an error image with an X mark."""
-        width, height = 22, 22
-        image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        image = self._create_base_image()
         dc = ImageDraw.Draw(image)
 
         # Draw circle background
-        dc.ellipse([(4, 4), (width - 4, height - 4)], fill=(100, 100, 100))
+        dc.ellipse(
+            [
+                (self.ICON_PADDING, self.ICON_PADDING),
+                (
+                    self.ICON_WIDTH - self.ICON_PADDING,
+                    self.ICON_HEIGHT - self.ICON_PADDING,
+                ),
+            ],
+            fill=(100, 100, 100),
+        )
 
         # Draw X mark
         line_color = (255, 255, 255)
         line_width = 2
-        dc.line([(7, 7), (width - 7, height - 7)], fill=line_color, width=line_width)
-        dc.line([(width - 7, 7), (7, height - 7)], fill=line_color, width=line_width)
+        margin = self.ICON_PADDING + 3  # Additional margin for X inside circle
+        dc.line(
+            [
+                (margin, margin),
+                (self.ICON_WIDTH - margin, self.ICON_HEIGHT - margin),
+            ],
+            fill=line_color,
+            width=line_width,
+        )
+        dc.line(
+            [
+                (self.ICON_WIDTH - margin, margin),
+                (margin, self.ICON_HEIGHT - margin),
+            ],
+            fill=line_color,
+            width=line_width,
+        )
 
         return image
 
@@ -215,12 +287,20 @@ class StatusIcon:
         frame_idx = self._current_frame % len(frames)
         return frames[frame_idx]
 
-    def _create_static_image(self, color):
+    def _create_static_image(self, color) -> Image.Image:
         """Create a simple colored circle image for the icon."""
-        width, height = 22, 22
-        image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        image = self._create_base_image()
         dc = ImageDraw.Draw(image)
-        dc.ellipse([(4, 4), (width - 4, height - 4)], fill=color)
+        dc.ellipse(
+            [
+                (self.ICON_PADDING, self.ICON_PADDING),
+                (
+                    self.ICON_WIDTH - self.ICON_PADDING,
+                    self.ICON_HEIGHT - self.ICON_PADDING,
+                ),
+            ],
+            fill=color,
+        )
         return image
 
     def _get_menu_title(self):
@@ -267,70 +347,83 @@ class StatusIcon:
                 self._icon.menu = self._setup_menu()
         return False  # Don't close the menu
 
+    def _add_transcriber_menu_items(self, menu_items: list):
+        """Add transcriber selection items to the menu."""
+        if not self._transcriber_callback:
+            return
+
+        # Add transcriber header
+        menu_items.append(
+            MenuItem(
+                "Transcriber",
+                None,
+                enabled=False,
+            )
+        )
+
+        # Add transcriber options with non-shifting prefix checkmark
+        menu_items.append(
+            MenuItem(
+                f"{('✓' if self._current_transcriber == 'openai' else '   ')} OpenAI",
+                self._select_openai,
+            )
+        )
+        menu_items.append(
+            MenuItem(
+                f"{('✓' if self._current_transcriber == 'groq' else '   ')} Groq",
+                self._select_groq,
+            )
+        )
+
+        menu_items.append(Menu.SEPARATOR)
+
+    def _add_language_menu_items(self, menu_items: list):
+        """Add language selection items to the menu."""
+        if not self._language_callback:
+            return
+
+        # Add language header
+        menu_items.append(
+            MenuItem(
+                "Language",
+                None,
+                enabled=False,
+            )
+        )
+
+        # Add language options with non-shifting prefix checkmark
+        menu_items.append(
+            MenuItem(
+                f"{('✓' if self._current_language == 'en' else '   ')} English",
+                self._select_english,
+            )
+        )
+        menu_items.append(
+            MenuItem(
+                f"{('✓' if self._current_language == 'th' else '   ')} Thai",
+                self._select_thai,
+            )
+        )
+
+        menu_items.append(Menu.SEPARATOR)
+
+    def _add_sound_menu_item(self, menu_items: list):
+        """Add sound toggle item to the menu."""
+        if not self._sound_toggle_callback:
+            return
+
+        sound_text = "Enable Sounds" if not self._sounds_enabled else "Disable Sounds"
+        menu_items.append(MenuItem(sound_text, self._toggle_sounds))
+
     def _setup_menu(self):
         """Create the right-click menu for the icon."""
-        sound_text = "Enable Sounds" if not self._sounds_enabled else "Disable Sounds"
-
         menu_items = []
 
-        # Add transcriber selection if callback is set
-        if self._transcriber_callback:
-            # Add transcriber header
-            menu_items.append(
-                MenuItem(
-                    "Transcriber",
-                    None,
-                    enabled=False,
-                )
-            )
+        self._add_transcriber_menu_items(menu_items)
+        self._add_language_menu_items(menu_items)
+        self._add_sound_menu_item(menu_items)
 
-            # Add transcriber options with non-shifting prefix checkmark
-            menu_items.append(
-                MenuItem(
-                    f"{('✓' if self._current_transcriber == 'openai' else '   ')} OpenAI",
-                    self._select_openai,
-                )
-            )
-            menu_items.append(
-                MenuItem(
-                    f"{('✓' if self._current_transcriber == 'groq' else '   ')} Groq",
-                    self._select_groq,
-                )
-            )
-
-            menu_items.append(Menu.SEPARATOR)
-
-        # Add language selection if callback is set
-        if self._language_callback:
-            # Add language header
-            menu_items.append(
-                MenuItem(
-                    "Language",
-                    None,
-                    enabled=False,
-                )
-            )
-
-            # Add language options with non-shifting prefix checkmark
-            menu_items.append(
-                MenuItem(
-                    f"{('✓' if self._current_language == 'en' else '   ')} English",
-                    self._select_english,
-                )
-            )
-            menu_items.append(
-                MenuItem(
-                    f"{('✓' if self._current_language == 'th' else '   ')} Thai",
-                    self._select_thai,
-                )
-            )
-
-            menu_items.append(Menu.SEPARATOR)
-
-        # Add sound toggle option just before exit
-        if self._sound_toggle_callback:
-            menu_items.append(MenuItem(sound_text, self._toggle_sounds))
-
+        # Always add exit option
         menu_items.append(MenuItem("Exit", self._exit))
 
         return Menu(*menu_items)
@@ -381,11 +474,16 @@ class StatusIcon:
         logger.info("Animation thread started")
 
     def _stop_animation(self):
-        """Stop the animation thread."""
+        """Stop the animation thread with proper cleanup."""
         self._animation_running = False
         if self._animation_thread and self._animation_thread.is_alive():
-            self._animation_thread.join(timeout=1.0)
-            logger.info("Animation thread stopped")
+            try:
+                self._animation_thread.join(timeout=1.0)
+                logger.info("Animation thread stopped")
+            except Exception:
+                logger.warning(
+                    "Animation thread did not stop gracefully within timeout"
+                )
 
     def start(self):
         """Start the status icon in a separate thread."""
@@ -432,6 +530,29 @@ class StatusIcon:
             self._animation_thread.start()
             logger.info("Status icon started in thread")
 
+    def _update_macos_icon(self, new_state: StatusIconState):
+        """Update the icon appearance on macOS."""
+        if self._icon is None:
+            return
+
+        try:
+            # Update icon appearance without recreating the icon
+            self._icon.icon = self._get_icon_image()
+            self._icon.title = (
+                f"Dictation: {self._state_descriptions.get(new_state, 'Unknown state')}"
+            )
+            self._icon.menu = self._setup_menu()
+            logger.info(f"Updated macOS status icon to: {new_state.name}")
+        except Exception as e:
+            logger.error(f"Failed to update macOS status icon: {e}")
+
+    def _update_other_platform_icon(self, new_state: StatusIconState):
+        """Update the icon appearance on non-macOS platforms."""
+        if self._icon is not None:
+            self._update_icon_appearance()
+        elif not self._is_initialized:
+            self._initialize_icon()
+
     def update_state(self, new_state: StatusIconState):
         """Update the status icon state and appearance."""
         with self._icon_lock:
@@ -443,23 +564,11 @@ class StatusIcon:
             )
             self._current_state = new_state
 
-            # On macOS, we need to be careful about icon updates
+            # Use platform-specific update method
             if platform.system() == "Darwin":
-                if self._icon is not None:
-                    try:
-                        # Update icon appearance without recreating the icon
-                        self._icon.icon = self._get_icon_image()
-                        self._icon.title = f"Dictation: {self._state_descriptions.get(new_state, 'Unknown state')}"
-                        self._icon.menu = self._setup_menu()
-                        logger.info(f"Updated macOS status icon to: {new_state.name}")
-                    except Exception as e:
-                        logger.error(f"Failed to update macOS status icon: {e}")
+                self._update_macos_icon(new_state)
             else:
-                # For other platforms, we can recreate the icon if needed
-                if self._icon is not None:
-                    self._update_icon_appearance()
-                elif not self._is_initialized:
-                    self._initialize_icon()
+                self._update_other_platform_icon(new_state)
 
     def _initialize_icon(self):
         """Initialize the status icon only if not already initialized."""
@@ -530,6 +639,22 @@ class StatusIcon:
             self._icon = None
             self._is_initialized = False
 
+    def _validate_callback(self, callback: Callable, name: str) -> bool:
+        """
+        Validate that a callback is callable.
+
+        Args:
+            callback: The callback to validate
+            name: Name of the callback for error logging
+
+        Returns:
+            bool: True if callback is valid, False otherwise
+        """
+        if not callable(callback):
+            logger.error(f"{name} callback must be callable")
+            return False
+        return True
+
     def set_sound_toggle_callback(
         self, callback: Callable[[bool], None], initial_state: bool = False
     ):
@@ -540,6 +665,9 @@ class StatusIcon:
             callback: Function to call when sounds are toggled (receives bool indicating if sounds are enabled)
             initial_state: Initial state of the sound toggle
         """
+        if not self._validate_callback(callback, "Sound toggle"):
+            return
+
         self._sound_toggle_callback = callback
         self._sounds_enabled = initial_state
         # Update menu if icon already exists
@@ -556,9 +684,18 @@ class StatusIcon:
             callback: Function to call when language is changed (receives language code)
             initial_language: Initial language code
         """
+        if not self._validate_callback(callback, "Language"):
+            return
+
         self._language_callback = callback
         if initial_language in self._languages:
             self._current_language = initial_language
+        else:
+            logger.warning(
+                f"Unknown language: {initial_language}, defaulting to English"
+            )
+            self._current_language = "en"
+
         # Update menu if icon already exists
         if self._icon:
             self._icon.menu = self._setup_menu()
@@ -573,9 +710,18 @@ class StatusIcon:
             callback: Function to call when transcriber is changed (receives transcriber id)
             initial_transcriber: Initial transcriber id
         """
+        if not self._validate_callback(callback, "Transcriber"):
+            return
+
         self._transcriber_callback = callback
         if initial_transcriber in self._transcribers:
             self._current_transcriber = initial_transcriber
+        else:
+            logger.warning(
+                f"Unknown transcriber: {initial_transcriber}, defaulting to OpenAI"
+            )
+            self._current_transcriber = "openai"
+
         # Update menu if icon already exists
         if self._icon:
             self._icon.menu = self._setup_menu()

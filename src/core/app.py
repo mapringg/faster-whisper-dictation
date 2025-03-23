@@ -2,6 +2,7 @@ import logging
 import platform
 import threading
 import time
+from abc import ABC, abstractmethod
 
 import numpy as np
 from pynput import keyboard
@@ -16,8 +17,81 @@ from .state_machine import create_state_machine
 logger = logging.getLogger(__name__)
 
 
+class PlatformHandler(ABC):
+    """Abstract base class for platform-specific behavior."""
+
+    @staticmethod
+    def get_handler():
+        """Factory method to get the appropriate platform handler."""
+        system = platform.system()
+        if system == "Darwin":
+            return MacOSHandler()
+        else:
+            return DefaultHandler()
+
+    @abstractmethod
+    def get_cancel_key_name(self) -> str:
+        """Get the platform-specific cancel key name for user messages."""
+        pass
+
+    @abstractmethod
+    def get_cancel_key(self) -> keyboard.Key:
+        """Get the platform-specific cancel key for the listener."""
+        pass
+
+    @abstractmethod
+    def run_key_listener(self, app, keylistener) -> None:
+        """Run the key listener in a platform-specific way."""
+        pass
+
+
+class MacOSHandler(PlatformHandler):
+    """Handler for macOS-specific behavior."""
+
+    def get_cancel_key_name(self) -> str:
+        """Get the macOS-specific cancel key name."""
+        return "right option"
+
+    def get_cancel_key(self) -> keyboard.Key:
+        """Get the macOS-specific cancel key."""
+        return keyboard.Key.alt_r  # Right option key on Mac
+
+    def run_key_listener(self, app, keylistener) -> None:
+        """Run the key listener in a macOS-specific way."""
+        from ..services.status_indicator import run_icon_on_macos
+
+        # On macOS, run the key listener in a separate thread
+        # and run the icon on the main thread
+        key_listener_thread = threading.Thread(target=keylistener.run)
+        key_listener_thread.daemon = True
+        key_listener_thread.start()
+
+        # Run icon on main thread (this will block until the icon is stopped)
+        run_icon_on_macos()
+
+
+class DefaultHandler(PlatformHandler):
+    """Default handler for other platforms (Linux, Windows)."""
+
+    def get_cancel_key_name(self) -> str:
+        """Get the default cancel key name."""
+        return "right alt"
+
+    def get_cancel_key(self) -> keyboard.Key:
+        """Get the default cancel key."""
+        return keyboard.Key.alt_r  # Right alt key on Linux/Windows
+
+    def run_key_listener(self, app, keylistener) -> None:
+        """Run the key listener in the default way."""
+        # On other platforms, run the key listener on the main thread
+        keylistener.run()
+
+
 class App:
     """Main application class that manages the dictation workflow."""
+
+    # Class constants
+    TRANSCRIBER_MODELS = {"openai": "gpt-4o-transcribe", "groq": "whisper-large-v3"}
 
     def __init__(self, args):
         """
@@ -79,11 +153,9 @@ class App:
     def _on_enter_ready(self, *_):
         """Callback that runs when entering READY state."""
         with self.status_icon_lock:
-            # Get the platform-specific cancel key name for the message
-            if platform.system() == "Darwin":
-                cancel_key_name = "right option"
-            else:
-                cancel_key_name = "right alt"
+            # Get the platform-specific cancel key name using the handler
+            platform_handler = PlatformHandler.get_handler()
+            cancel_key_name = platform_handler.get_cancel_key_name()
 
             logger.info(
                 f"Double tap {self.args.trigger_key} to start recording. "
@@ -113,17 +185,22 @@ class App:
     def _exit_app(self):
         """Handle exit request from the status icon menu."""
         logger.info("Exit requested from status icon")
-        # Perform any necessary cleanup
-        try:
-            if self.m.is_RECORDING():
-                self.recorder.stop()
-            self.status_icon.stop()
-        except Exception as e:
-            logger.error(f"Error during exit: {str(e)}")
-        # Exit application
-        import sys
+        # Set exit flag for graceful shutdown
+        self.exit_requested = True
 
-        sys.exit(0)
+        # Perform any necessary cleanup
+        self._cleanup_resources()
+
+        # Signal main thread to exit
+        # This is handled differently depending on the platform
+        # For GUI frameworks, we would use their quit mechanism
+        # For our command-line app, we'll use a controlled exit
+        import os
+        import signal
+
+        # Send SIGINT to our own process for a controlled exit
+        # This allows any registered signal handlers to run
+        os.kill(os.getpid(), signal.SIGINT)
 
     def _toggle_sounds(self, enabled: bool):
         """Toggle sound effects on/off."""
@@ -138,17 +215,23 @@ class App:
     def _change_transcriber(self, transcriber_id: str):
         """Change the transcription service."""
         try:
+            # Get model name from class constants
+            model_name = self.TRANSCRIBER_MODELS.get(transcriber_id)
+            if not model_name:
+                logger.error(f"Unknown transcriber: {transcriber_id}")
+                self.status_icon.update_state(StatusIconState.ERROR)
+                return
+
             # Create new transcriber instance with appropriate model name
             if transcriber_id == "openai":
-                model_name = "gpt-4o-transcribe"  # OpenAI specific model
                 self.transcriber = OpenAITranscriber(
                     self.m.finish_transcribing, model_name
                 )
             else:  # groq
-                model_name = "whisper-large-v3"  # Groq specific model
                 self.transcriber = GroqTranscriber(
                     self.m.finish_transcribing, model_name
                 )
+
             # Update the stored model name
             self.args.model_name = model_name
             self.args.transcriber = transcriber_id
@@ -223,17 +306,23 @@ class App:
             self.m.to_READY()
 
     def _timer_loop(self) -> None:
-        """Continuous timer monitoring loop."""
+        """Continuous timer monitoring loop using threading.Timer for efficiency."""
         while True:
+            # Wait until timer is activated
             self.timer_active.wait()
-            start_time = time.time()
-            while time.time() - start_time < self.args.max_time:
-                if not self.timer_active.is_set():
-                    break
-                time.sleep(0.1)  # Precise timeout checking
-            if self.timer_active.is_set():
-                self.timer_stop()
+
+            # Create and start a timer
+            self.timer = threading.Timer(self.args.max_time, self.timer_stop)
+            self.timer.daemon = True
+            self.timer.start()
+
+            # Wait until timer is cleared (by stop or cancel)
+            self.timer_active.wait()
             self.timer_active.clear()
+
+            # Cancel the timer if it's still running
+            if hasattr(self, "timer") and self.timer:
+                self.timer.cancel()
 
     def _can_change_state(self) -> bool:
         """
@@ -360,6 +449,36 @@ class App:
         except Exception as e:
             logger.error(f"Error in timer stop: {str(e)}")
 
+    def _normalize_key(self, key: str) -> str:
+        """
+        Normalize key string to handle platform-specific variations.
+
+        Args:
+            key: Key string to normalize
+
+        Returns:
+            str: Normalized key string
+        """
+        # Handle Key.attr format (e.g., "Key.cmd_r")
+        if key.startswith("Key."):
+            attr_name = key[4:]  # Remove "Key." prefix
+            try:
+                # Get the attribute directly from keyboard.Key
+                return getattr(keyboard.Key, attr_name)
+            except AttributeError as err:
+                logger.error(f"Invalid key attribute: {attr_name}")
+                raise ValueError(f"Invalid key attribute: {attr_name}") from err
+
+        # Handle bracket format (e.g., "<cmd_r>")
+        key = key.replace("<win>", "<cmd>").replace("<super>", "<cmd>")
+        try:
+            parsed_key = keyboard.HotKey.parse(key)[0]
+            logger.info(f"Using trigger key: {parsed_key}")
+            return parsed_key
+        except ValueError as e:
+            logger.error(f"Invalid trigger key: {key} - {str(e)}")
+            raise
+
     def _setup_key_listener(self) -> tuple[DoubleKeyListener, DoubleKeyListener]:
         """
         Configure and return the key listeners with normalized trigger keys.
@@ -367,45 +486,15 @@ class App:
         Returns:
             tuple: (main_listener, cancel_listener)
         """
-
-        def normalize_key(key: str) -> str:
-            """
-            Normalize key string to handle platform-specific variations.
-
-            Args:
-                key: Key string to normalize
-
-            Returns:
-                str: Normalized key string
-            """
-            # Handle Key.attr format (e.g., "Key.cmd_r")
-            if key.startswith("Key."):
-                attr_name = key[4:]  # Remove "Key." prefix
-                try:
-                    # Get the attribute directly from keyboard.Key
-                    return getattr(keyboard.Key, attr_name)
-                except AttributeError as err:
-                    logger.error(f"Invalid key attribute: {attr_name}")
-                    raise ValueError(f"Invalid key attribute: {attr_name}") from err
-
-            # Handle bracket format (e.g., "<cmd_r>")
-            key = key.replace("<win>", "<cmd>").replace("<super>", "<cmd>")
-            try:
-                parsed_key = keyboard.HotKey.parse(key)[0]
-                logger.info(f"Using trigger key: {parsed_key}")
-                return parsed_key
-            except ValueError as e:
-                logger.error(f"Invalid trigger key: {key} - {str(e)}")
-                raise
-
         try:
-            trigger_key = normalize_key(self.args.trigger_key)
+            # Get platform-specific handler
+            platform_handler = PlatformHandler.get_handler()
 
-            # Set cancel key based on platform
-            if platform.system() == "Darwin":  # macOS
-                cancel_key = keyboard.Key.alt_r  # Right option key on Mac
-            else:
-                cancel_key = keyboard.Key.alt_r  # Right alt key on Linux
+            # Normalize trigger key
+            trigger_key = self._normalize_key(self.args.trigger_key)
+
+            # Get platform-specific cancel key
+            cancel_key = platform_handler.get_cancel_key()
 
             # Main trigger key listener
             key_listener = DoubleKeyListener(self.start, self.stop, trigger_key)
@@ -420,6 +509,36 @@ class App:
         except Exception as e:
             logger.error(f"Error setting up key listener: {str(e)}")
             raise
+
+    def _cleanup_resources(self) -> None:
+        """Clean up all resources to ensure proper shutdown."""
+        try:
+            logger.info("Cleaning up resources...")
+
+            # Cancel any active timer
+            if hasattr(self, "timer_active"):
+                self.timer_active.clear()
+
+            if hasattr(self, "timer") and self.timer:
+                self.timer.cancel()
+
+            # Stop recording if active
+            if hasattr(self, "recorder") and self.m.is_RECORDING():
+                try:
+                    self.recorder.stop()
+                except Exception as e:
+                    logger.error(f"Error stopping recorder: {str(e)}")
+
+            # Stop status icon
+            if hasattr(self, "status_icon"):
+                try:
+                    self.status_icon.stop()
+                except Exception as e:
+                    logger.error(f"Error stopping status icon: {str(e)}")
+
+            logger.info("Resource cleanup completed")
+        except Exception as e:
+            logger.error(f"Error during resource cleanup: {str(e)}")
 
     def run(self) -> None:
         """Main application loop that handles key listening and state management."""
@@ -438,21 +557,11 @@ class App:
             # Initialize state machine
             self.m.to_READY()
 
-            # Check if we're on macOS
-            if platform.system() == "Darwin":
-                # On macOS, run the key listener in a separate thread
-                # and run the icon on the main thread
-                from ..services.status_indicator import run_icon_on_macos
+            # Get platform-specific handler
+            platform_handler = PlatformHandler.get_handler()
 
-                key_listener_thread = threading.Thread(target=keylistener.run)
-                key_listener_thread.daemon = True
-                key_listener_thread.start()
-
-                # Run icon on main thread (this will block until the icon is stopped)
-                run_icon_on_macos()
-            else:
-                # On other platforms, run the key listener on the main thread
-                keylistener.run()
+            # Run key listener in a platform-specific way
+            platform_handler.run_key_listener(self, keylistener)
         except Exception as e:
             logger.error(f"Application error: {str(e)}")
             # Try to stop the status icon
