@@ -27,6 +27,20 @@ def refresh_devices():
         # Log available devices after refresh
         devices = sd.query_devices()
         logger.info(f"Found {len(devices)} audio devices after refresh")
+
+        # Log all available input devices for debugging
+        input_devices = [d for d in devices if d["max_input_channels"] > 0]
+        logger.debug(f"Available input devices: {len(input_devices)}")
+        for i, device in enumerate(input_devices):
+            logger.debug(
+                f"  {i}: {device['name']} (channels: {device['max_input_channels']})"
+            )
+
+        # Verify default devices are accessible
+        default_input, default_output = get_default_devices()
+        if default_input is None:
+            logger.warning("No default input device detected after refresh")
+
         return True
     except Exception as e:
         logger.error(f"Error refreshing audio devices: {str(e)}")

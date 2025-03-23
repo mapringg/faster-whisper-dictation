@@ -71,19 +71,42 @@ class Recorder:
             """Capture incoming audio data while recording is active."""
             if status:
                 logger.warning(f"Stream callback status: {status}")
+                if status.input_overflow:
+                    logger.warning("Input overflow - audio data may be lost")
+                if status.input_underflow:
+                    logger.warning("Input underflow - audio device may be unavailable")
             if self.recording:
                 self.frames.append(indata.copy())
 
         try:
-            return sd.InputStream(
+            # Get detailed device info to verify it's valid
+            try:
+                device_info = sd.query_devices(input_device)
+                logger.info(
+                    f"Using audio device: {device_info['name']} (ID: {input_device})"
+                )
+                if device_info["max_input_channels"] < 1:
+                    logger.error(f"Device has no input channels: {device_info}")
+                    return None
+            except Exception as e:
+                logger.error(
+                    f"Failed to query device info for device {input_device}: {str(e)}"
+                )
+
+            stream = sd.InputStream(
                 device=input_device,
                 channels=1,
                 samplerate=16000,
                 callback=callback,
                 dtype=np.float32,
             )
+            logger.info("Audio stream created successfully")
+            return stream
         except sd.PortAudioError as e:
             logger.error(f"Error setting up audio stream: {str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error setting up audio stream: {str(e)}")
             return None
 
     def _process_recorded_audio(
@@ -169,6 +192,15 @@ class Recorder:
             # Set up and run audio stream
             self.stream = self._setup_audio_stream(input_device)
             if self.stream is None:
+                logger.error("Failed to set up audio stream")
+                self.callback(audio=None)
+                return
+
+            try:
+                logger.info(f"Starting stream with input device: {input_device}")
+                self.stream.start()
+            except sd.PortAudioError as e:
+                logger.error(f"Failed to start audio stream: {str(e)}")
                 self.callback(audio=None)
                 return
 
@@ -180,8 +212,18 @@ class Recorder:
             processed_audio = self._process_recorded_audio(language)
             if processed_audio:
                 audio_data, lang = processed_audio
-                self.callback(audio=audio_data, language=lang)
+                if len(self.frames) == 0:
+                    logger.warning(
+                        "Recording stopped immediately - no audio frames captured"
+                    )
+                    self.callback(audio=None)
+                else:
+                    logger.info(
+                        f"Recording successful with {len(self.frames)} audio frames"
+                    )
+                    self.callback(audio=audio_data, language=lang)
             else:
+                logger.warning("No processed audio available after recording")
                 self.callback(audio=None)
 
         except sd.PortAudioError as e:
