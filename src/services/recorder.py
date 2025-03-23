@@ -173,7 +173,30 @@ class Recorder:
             return None
 
         try:
-            audio_data = np.concatenate(self.frames, axis=0)
+            # Check if we have valid frames before processing
+            valid_frames = [frame for frame in self.frames if frame is not None]
+            if not valid_frames:
+                logger.warning("No valid audio frames to process")
+                return None
+
+            # Process frames in chunks to avoid excessive memory usage
+            chunk_size = 100  # Process 100 frames at a time
+            all_chunks = []
+
+            for i in range(0, len(valid_frames), chunk_size):
+                chunk_frames = valid_frames[i : i + chunk_size]
+                if chunk_frames:
+                    chunk_data = np.concatenate(chunk_frames, axis=0)
+                    all_chunks.append(chunk_data)
+
+            # Concatenate all chunks
+            if all_chunks:
+                audio_data = np.concatenate(all_chunks, axis=0)
+                # Clear chunk list to free memory
+                all_chunks = []
+            else:
+                logger.warning("No audio chunks processed")
+                return None
 
             # Check file size (40 MB limit)
             # Each sample is 4 bytes (float32) and we have 1 channel
@@ -191,12 +214,22 @@ class Recorder:
                 max_samples = max_size_bytes // 4
                 audio_data = audio_data[:max_samples]
 
+            # Clear frames list to free memory
+            self.frames = []
+
+            # Force garbage collection
+            import gc
+
+            gc.collect()
+
             if language and isinstance(language, str):
                 logger.info(f"Passing language to transcriber: {language}")
                 return audio_data, language
             return audio_data, None
         except Exception as e:
             logger.error(f"Error processing audio data: {str(e)}")
+            # Clear frames on error to avoid memory leaks
+            self.frames = []
             return None
 
     def _cleanup_stream(self) -> None:
@@ -240,17 +273,20 @@ class Recorder:
                         sd.sleep(100)  # Sleep to prevent busy-waiting
 
                 # Process recorded audio (after stream is closed but while still in recording state)
+                # Store frame count before processing
+                frame_count = len(self.frames)
                 processed_audio = self._process_recorded_audio(language)
+
                 if processed_audio:
                     audio_data, lang = processed_audio
-                    if len(self.frames) == 0:
+                    if frame_count == 0:
                         logger.warning(
                             "Recording stopped immediately - no audio frames captured"
                         )
                         self.callback(audio=None)
                     else:
                         logger.info(
-                            f"Recording successful with {len(self.frames)} audio frames"
+                            f"Recording successful with {frame_count} audio frames"
                         )
                         self.callback(audio=audio_data, language=lang)
                 else:

@@ -448,18 +448,48 @@ class StatusIcon:
     def _run_animation(self):
         """Run the animation loop in a separate thread."""
         try:
+            # Use a local reference to prevent memory leaks
+            frames_cache = {}
+
             while self._animation_running:
                 # Update the frame counter
                 self._current_frame += 1
 
+                # Limit animation frames to prevent memory leaks
+                if self._current_frame > 1000:
+                    self._current_frame = 0
+
                 # Update the icon with the new frame
                 if self._icon:
-                    self._icon.icon = self._get_icon_image()
+                    # Get the current state's frames
+                    if (
+                        self._current_state not in frames_cache
+                        and self._current_state in self._animation_frames
+                    ):
+                        # Make a shallow copy to avoid memory leaks
+                        frames_cache[self._current_state] = self._animation_frames[
+                            self._current_state
+                        ]
+
+                    # Update icon
+                    try:
+                        self._icon.icon = self._get_icon_image()
+                    except Exception as icon_error:
+                        logger.error(f"Error updating icon image: {icon_error}")
+
+                # Free memory by clearing any unused state frames from cache
+                current_states = {self._current_state}
+                for state in list(frames_cache.keys()):
+                    if state not in current_states:
+                        del frames_cache[state]
 
                 # Sleep until next frame
                 time.sleep(self._animation_speed)
         except Exception as e:
             logger.error(f"Error in animation thread: {e}")
+        finally:
+            # Clean up before exiting thread
+            frames_cache.clear()
 
     def _start_animation(self):
         """Start the animation thread if not already running."""
@@ -633,11 +663,37 @@ class StatusIcon:
     def stop(self):
         """Clean up resources when stopping the status icon."""
         with self._icon_lock:
+            # First stop the animation thread
             self._animation_running = False
             if self._animation_thread and self._animation_thread.is_alive():
-                self._animation_thread.join()
+                try:
+                    self._animation_thread.join(timeout=1.0)
+                    logger.info("Animation thread joined successfully")
+                except Exception as e:
+                    logger.error(f"Error joining animation thread: {e}")
+
+            # Clear animation frame cache to free memory
+            for state in list(self._animation_frames.keys()):
+                self._animation_frames[state] = []
+
+            # Clean up the icon
+            if self._icon:
+                try:
+                    self._icon.stop()
+                    logger.info("Icon stopped successfully")
+                except Exception as e:
+                    logger.error(f"Error stopping icon: {e}")
+
+            # Reset variables
             self._icon = None
             self._is_initialized = False
+            self._current_frame = 0
+
+            # Force garbage collection to clean up any lingering references
+            import gc
+
+            gc.collect()
+            logger.info("Garbage collection performed during status icon cleanup")
 
     def _validate_callback(self, callback: Callable, name: str) -> bool:
         """

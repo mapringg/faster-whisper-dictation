@@ -521,11 +521,16 @@ class App:
 
             if hasattr(self, "timer") and self.timer:
                 self.timer.cancel()
+                self.timer = None
 
             # Stop recording if active
-            if hasattr(self, "recorder") and self.m.is_RECORDING():
+            if hasattr(self, "recorder"):
                 try:
-                    self.recorder.stop()
+                    if self.m.is_RECORDING():
+                        self.recorder.stop()
+                    # Clear recorder frames to free memory
+                    if hasattr(self.recorder, "frames"):
+                        self.recorder.frames = []
                 except Exception as e:
                     logger.error(f"Error stopping recorder: {str(e)}")
 
@@ -535,6 +540,21 @@ class App:
                     self.status_icon.stop()
                 except Exception as e:
                     logger.error(f"Error stopping status icon: {str(e)}")
+
+            # Clean up transcriber resources
+            if hasattr(self, "transcriber"):
+                # Nothing to do for now, but could be extended
+                pass
+
+            # Clean up keyboard replayer
+            if hasattr(self, "replayer"):
+                # Nothing specific to clean up
+                pass
+
+            # Force garbage collection
+            import gc
+
+            gc.collect()
 
             logger.info("Resource cleanup completed")
         except Exception as e:

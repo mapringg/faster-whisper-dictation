@@ -10,3 +10,5 @@ soundfile
 wave
 pystray
 Pillow
+psutil
+matplotlib
