@@ -75,11 +75,11 @@ class DefaultHandler(PlatformHandler):
 
     def get_cancel_key_name(self) -> str:
         """Get the default cancel key name."""
-        return "right alt"
+        return "left control"
 
     def get_cancel_key(self) -> keyboard.Key:
         """Get the default cancel key."""
-        return keyboard.Key.alt_r  # Right alt key on Linux/Windows
+        return keyboard.Key.ctrl_l  # Left control key on Linux/Windows
 
     def run_key_listener(self, app, keylistener) -> None:
         """Run the key listener in the default way."""
@@ -192,15 +192,15 @@ class App:
         self._cleanup_resources()
 
         # Platform-specific service management
-        import platform
-        import subprocess
         import os
-        import sys
+        import platform
         import shutil
+        import subprocess
+        import sys
         import time
 
         system = platform.system()
-        
+
         # Create a marker file to indicate user-initiated exit (used by run.sh)
         # Creating this BEFORE stopping the service ensures run.sh won't restart
         try:
@@ -209,73 +209,77 @@ class App:
                 f.write("1")
         except Exception as e:
             logger.error(f"Failed to create exit marker file: {e}")
-        
+
         # On macOS, unload the LaunchAgent
         if system == "Darwin":
             try:
                 logger.info("Attempting to unload macOS LaunchAgent")
                 # Use full path expansion for home directory
                 home_dir = os.path.expanduser("~")
-                plist_path = os.path.join(home_dir, "Library/LaunchAgents/com.user.dictation.plist")
-                
+                plist_path = os.path.join(
+                    home_dir, "Library/LaunchAgents/com.user.dictation.plist"
+                )
+
                 # Use subprocess with expanded path, not shell=True
                 subprocess.run(
                     ["launchctl", "unload", plist_path],
                     check=False,
-                    capture_output=True
+                    capture_output=True,
                 )
-                
+
                 # Verify the service is unloaded
                 result = subprocess.run(
                     ["launchctl", "list", "com.user.dictation"],
                     check=False,
-                    capture_output=True
+                    capture_output=True,
                 )
-                
+
                 if result.returncode != 0:
                     logger.info("LaunchAgent successfully unloaded")
                 else:
                     logger.warning("LaunchAgent may still be loaded")
-                    
+
             except Exception as e:
                 logger.error(f"Failed to unload LaunchAgent: {e}")
-        
+
         # On Linux with systemd, try to stop the user service
-        elif os.path.exists("/etc/debian_version") or os.path.exists("/etc/linuxmint/info"):
+        elif os.path.exists("/etc/debian_version") or os.path.exists(
+            "/etc/linuxmint/info"
+        ):
             if shutil.which("systemctl"):
                 try:
                     logger.info("Attempting to stop systemd user service")
                     subprocess.run(
                         ["systemctl", "--user", "stop", "dictation.service"],
                         check=False,
-                        capture_output=True
+                        capture_output=True,
                     )
-                    
+
                     # Verify the service is stopped
                     result = subprocess.run(
                         ["systemctl", "--user", "is-active", "dictation.service"],
                         check=False,
-                        capture_output=True
+                        capture_output=True,
                     )
-                    
+
                     if b"inactive" in result.stdout or b"failed" in result.stdout:
                         logger.info("Systemd service successfully stopped")
                     else:
                         logger.warning("Systemd service may still be running")
-                        
+
                 except Exception as e:
                     logger.error(f"Failed to stop systemd service: {e}")
-        
+
         # Make sure any file operations have completed
         try:
             sys.stdout.flush()
             sys.stderr.flush()
         except Exception:
             pass
-            
+
         # Small delay to ensure subprocess operations and file writes complete
         time.sleep(0.5)
-            
+
         logger.info("Exiting application completely")
         # Use os._exit to force immediate termination of the process
         # This is needed because regular sys.exit() might not work if we're in a daemon thread

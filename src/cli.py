@@ -8,8 +8,8 @@ def parse_args():
         default_trigger_key = "Key.cmd_r"  # Right Command key
         default_trigger_desc = "Right Command key (Key.cmd_r)"
     else:  # Linux and other platforms
-        default_trigger_key = "Key.ctrl_r"  # Right Control key
-        default_trigger_desc = "Right Control key (Key.ctrl_r)"
+        default_trigger_key = "Key.alt_l"  # Left Alt key
+        default_trigger_desc = "Left Alt key (Key.alt_l)"
 
     parser = argparse.ArgumentParser(
         description="Dictation app powered by OpenAI and Groq APIs"
