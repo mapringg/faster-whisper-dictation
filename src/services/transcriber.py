@@ -1,8 +1,6 @@
 import json
 import logging
 import os
-import platform
-import subprocess
 import tempfile
 import time
 from abc import ABC, abstractmethod
@@ -129,6 +127,7 @@ class BaseTranscriber(ABC):
         logger.info(f"Starting transcription with {self.__class__.__name__}...")
         audio = event.kwargs.get("audio", None)
         language = event.kwargs.get("language")
+        temp_filename = None
 
         # Validate audio input
         if audio is None or not isinstance(audio, np.ndarray) or audio.size == 0:
@@ -142,21 +141,37 @@ class BaseTranscriber(ABC):
             self.callback(segments=[])
             return
 
-        # Get appropriate file extension
-        file_extension = self.get_file_extension()
+        # Release reference to the audio object when we're done with it
+        # to avoid memory leaks
+        def cleanup_audio():
+            nonlocal audio
+            if audio is not None:
+                # Release reference to avoid circular references/memory leaks
+                audio = None
+                # Force garbage collection
+                import gc
 
-        # Save audio to a temporary file
-        with tempfile.NamedTemporaryFile(
-            suffix=file_extension, delete=False
-        ) as temp_file:
-            temp_filename = temp_file.name
+                gc.collect()
 
         try:
+            # Get appropriate file extension
+            file_extension = self.get_file_extension()
+
+            # Save audio to a temporary file
+            with tempfile.NamedTemporaryFile(
+                suffix=file_extension, delete=False
+            ) as temp_file:
+                temp_filename = temp_file.name
+
             # Save audio and handle potential errors
             if not self.save_audio(audio, temp_filename):
                 logger.error(f"Failed to save audio to {file_extension} temporary file")
                 self.callback(segments=[])
+                cleanup_audio()
                 return
+
+            # We don't need the audio data in memory anymore once saved to disk
+            cleanup_audio()
 
             # Make API request and handle response
             result = self.make_api_request(temp_filename, language)
@@ -170,6 +185,8 @@ class BaseTranscriber(ABC):
 
                 segments = [Segment(text)]
                 self.callback(segments=segments)
+                # Clear result data after use
+                result = None
             else:
                 logger.error("Failed to get transcription after retries")
                 self.callback(segments=[])
@@ -179,12 +196,21 @@ class BaseTranscriber(ABC):
             self.callback(segments=[])
 
         finally:
+            # Always ensure audio is cleaned up
+            cleanup_audio()
+
             # Clean up the temporary file
             try:
-                if os.path.exists(temp_filename):
+                if temp_filename and os.path.exists(temp_filename):
                     os.unlink(temp_filename)
+                    logger.info(f"Temporary file {temp_filename} deleted")
             except Exception as e:
                 logger.error(f"Error deleting temporary file: {str(e)}")
+
+            # Final garbage collection
+            import gc
+
+            gc.collect()
 
     @abstractmethod
     def get_file_extension(self) -> str:
@@ -257,6 +283,7 @@ class GroqTranscriber(BaseTranscriber):
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
         for attempt in range(self.MAX_RETRIES):
+            response = None
             try:
                 with open(temp_filename, "rb") as audio_file:
                     files = {"file": audio_file}
@@ -285,9 +312,15 @@ class GroqTranscriber(BaseTranscriber):
                     # Handle successful response
                     if response.status_code == 200:
                         try:
-                            return response.json()
+                            result = response.json()
+                            # Close the response to release resources
+                            response.close()
+                            return result
                         except json.JSONDecodeError as e:
                             logger.error(f"Failed to decode JSON response: {str(e)}")
+                            # Close the response to release resources
+                            if response:
+                                response.close()
                             continue
 
                     # Handle rate limiting
@@ -300,6 +333,8 @@ class GroqTranscriber(BaseTranscriber):
                         logger.warning(
                             f"Rate limited. Waiting {retry_after} seconds..."
                         )
+                        # Close the response to release resources
+                        response.close()
                         time.sleep(retry_after)
                         continue
 
@@ -309,6 +344,9 @@ class GroqTranscriber(BaseTranscriber):
                             f"API error: {response.status_code} - {response.text}"
                         )
                         logger.error(error_msg)
+
+                        # Close the response to release resources
+                        response.close()
 
                         # Handle specific error cases
                         if response.status_code == 401:
@@ -330,10 +368,23 @@ class GroqTranscriber(BaseTranscriber):
 
             except requests.exceptions.RequestException as e:
                 logger.error(f"Network error: {str(e)}")
+                # Close the response to release resources if it exists
+                if response:
+                    try:
+                        response.close()
+                    except:  # noqa: E722
+                        pass
+
                 if attempt < self.MAX_RETRIES - 1:
                     wait_time = self.INITIAL_RETRY_DELAY * (2**attempt)
                     logger.info(f"Retrying in {wait_time} seconds...")
                     time.sleep(wait_time)
+
+            # Force garbage collection after each attempt
+            if attempt % 2 == 1:
+                import gc
+
+                gc.collect()
 
         return None
 
@@ -391,7 +442,7 @@ class OpenAITranscriber(BaseTranscriber):
         Make API request to OpenAI with retry mechanism.
 
         Args:
-            temp_filename: Path to temporary MP3 file
+            temp_filename: Path to temporary WAV file
             language: Optional language code for transcription
 
         Returns:
@@ -401,6 +452,7 @@ class OpenAITranscriber(BaseTranscriber):
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
         for attempt in range(self.MAX_RETRIES):
+            response = None
             try:
                 with open(temp_filename, "rb") as audio_file:
                     files = {"file": audio_file}
@@ -429,9 +481,15 @@ class OpenAITranscriber(BaseTranscriber):
                     # Handle successful response
                     if response.status_code == 200:
                         try:
-                            return response.json()
+                            result = response.json()
+                            # Close the response to release resources
+                            response.close()
+                            return result
                         except json.JSONDecodeError as e:
                             logger.error(f"Failed to decode JSON response: {str(e)}")
+                            # Close the response to release resources
+                            if response:
+                                response.close()
                             continue
 
                     # Handle rate limiting
@@ -444,6 +502,8 @@ class OpenAITranscriber(BaseTranscriber):
                         logger.warning(
                             f"Rate limited. Waiting {retry_after} seconds..."
                         )
+                        # Close the response to release resources
+                        response.close()
                         time.sleep(retry_after)
                         continue
 
@@ -453,6 +513,9 @@ class OpenAITranscriber(BaseTranscriber):
                             f"API error: {response.status_code} - {response.text}"
                         )
                         logger.error(error_msg)
+
+                        # Close the response to release resources
+                        response.close()
 
                         # Handle specific error cases
                         if response.status_code == 401:
@@ -474,9 +537,22 @@ class OpenAITranscriber(BaseTranscriber):
 
             except requests.exceptions.RequestException as e:
                 logger.error(f"Network error: {str(e)}")
+                # Close the response to release resources if it exists
+                if response:
+                    try:
+                        response.close()
+                    except:  # noqa: E722
+                        pass
+
                 if attempt < self.MAX_RETRIES - 1:
                     wait_time = self.INITIAL_RETRY_DELAY * (2**attempt)
                     logger.info(f"Retrying in {wait_time} seconds...")
                     time.sleep(wait_time)
+
+            # Force garbage collection after each attempt
+            if attempt % 2 == 1:
+                import gc
+
+                gc.collect()
 
         return None
