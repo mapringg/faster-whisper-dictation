@@ -175,24 +175,43 @@ class Recorder:
         try:
             # Check if we have valid frames before processing
             valid_frames = [frame for frame in self.frames if frame is not None]
+
+            # Clear original frames list immediately to free memory
+            self.frames = []
+
             if not valid_frames:
                 logger.warning("No valid audio frames to process")
                 return None
 
             # Process frames in chunks to avoid excessive memory usage
-            chunk_size = 100  # Process 100 frames at a time
+            chunk_size = 50  # Smaller chunk size to reduce memory usage
             all_chunks = []
 
             for i in range(0, len(valid_frames), chunk_size):
                 chunk_frames = valid_frames[i : i + chunk_size]
                 if chunk_frames:
+                    # Concatenate this chunk
                     chunk_data = np.concatenate(chunk_frames, axis=0)
                     all_chunks.append(chunk_data)
+                    # Clear references to processed frames
+                    for j in range(i, min(i + chunk_size, len(valid_frames))):
+                        valid_frames[j] = None
+
+                    # Force garbage collection periodically
+                    if i % 200 == 0:
+                        import gc
+
+                        gc.collect()
+
+            # Free memory from valid_frames
+            valid_frames = None
 
             # Concatenate all chunks
             if all_chunks:
                 audio_data = np.concatenate(all_chunks, axis=0)
-                # Clear chunk list to free memory
+                # Clear chunk list to free memory immediately
+                for i in range(len(all_chunks)):
+                    all_chunks[i] = None
                 all_chunks = []
             else:
                 logger.warning("No audio chunks processed")
@@ -212,10 +231,12 @@ class Recorder:
 
                 # Calculate how many samples we can keep
                 max_samples = max_size_bytes // 4
-                audio_data = audio_data[:max_samples]
-
-            # Clear frames list to free memory
-            self.frames = []
+                # Create a new array with just the data we need instead of slicing
+                truncated_data = np.array(audio_data[:max_samples], copy=True)
+                # Free the original array
+                audio_data = None
+                # Assign the truncated data
+                audio_data = truncated_data
 
             # Force garbage collection
             import gc
@@ -230,6 +251,11 @@ class Recorder:
             logger.error(f"Error processing audio data: {str(e)}")
             # Clear frames on error to avoid memory leaks
             self.frames = []
+
+            # Force garbage collection
+            import gc
+
+            gc.collect()
             return None
 
     def _cleanup_stream(self) -> None:
