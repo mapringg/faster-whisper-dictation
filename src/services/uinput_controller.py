@@ -149,20 +149,20 @@ class UInputKeyboardController:
             if needs_shift:
                 # Press shift
                 self.device.emit(uinput.KEY_LEFTSHIFT, 1)
-                time.sleep(0.01)
+                time.sleep(0.001)
 
             # Press and release the key
             self.device.emit(key, 1)  # Press
-            time.sleep(0.01)
+            time.sleep(0.001)
             self.device.emit(key, 0)  # Release
 
             if needs_shift:
                 # Release shift
-                time.sleep(0.01)
+                time.sleep(0.001)
                 self.device.emit(uinput.KEY_LEFTSHIFT, 0)
 
             # Small delay between keystrokes for stability
-            time.sleep(0.02)
+            time.sleep(0.0025)
 
         except Exception as e:
             logger.error(f"Error typing character '{char}': {str(e)}")
