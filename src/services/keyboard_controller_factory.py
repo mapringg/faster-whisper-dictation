@@ -4,8 +4,6 @@ from typing import Any
 
 from pynput import keyboard
 
-from .uinput_controller import UInputKeyboardController
-
 logger = logging.getLogger(__name__)
 
 
@@ -22,6 +20,9 @@ def create_keyboard_controller() -> Any:
         logger.info("Using pynput keyboard controller for macOS")
         return keyboard.Controller()
     elif system == "Linux":
+        # Import UInputKeyboardController only on Linux
+        from .uinput_controller import UInputKeyboardController
+
         logger.info("Using UInput keyboard controller for Linux")
         return UInputKeyboardController()
     else:
