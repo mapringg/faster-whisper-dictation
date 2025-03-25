@@ -72,11 +72,25 @@ fi
 log "Activating virtual environment"
 source ".venv/bin/activate"
 
-# Check if required Python packages are installed
-if ! python -c "import sounddevice; import soundfile; import pynput" 2>/dev/null; then
-    log "Error: Required Python packages are missing"
-    log "Please run setup.sh to install the required packages"
-    exit 1
+# Check if required Python packages are installed based on OS
+if [[ "$(uname)" == "Darwin" ]]; then
+    if ! python -c "import sounddevice; import soundfile; import pynput" 2>/dev/null; then
+        log "Error: Required Python packages are missing"
+        log "Please run setup.sh to install the required packages"
+        exit 1
+    fi
+elif [[ "$(uname)" == "Linux" ]]; then
+    if ! python -c "import sounddevice; import soundfile; import uinput" 2>/dev/null; then
+        log "Error: Required Python packages are missing"
+        log "Please run setup.sh to install the required packages"
+        exit 1
+    fi
+else
+    if ! python -c "import sounddevice; import soundfile; import pynput" 2>/dev/null; then
+        log "Error: Required Python packages are missing"
+        log "Please run setup.sh to install the required packages"
+        exit 1
+    fi
 fi
 
 # Run the dictation tool

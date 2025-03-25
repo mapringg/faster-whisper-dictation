@@ -7,6 +7,53 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
+# Function to set up uinput for Linux
+setup_uinput() {
+    log "Setting up uinput for Linux..."
+    
+    # Create uinput module loading configuration
+    if [ ! -f "/etc/modules-load.d/uinput.conf" ]; then
+        log "Creating uinput module configuration..."
+        echo "uinput" | sudo tee /etc/modules-load.d/uinput.conf
+    fi
+    
+    # Create udev rule for uinput
+    if [ ! -f "/etc/udev/rules.d/99-uinput.rules" ]; then
+        log "Creating uinput udev rules..."
+        echo 'KERNEL=="uinput", MODE="0660", GROUP="input", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/99-uinput.rules
+    fi
+    
+    # Add user to input group if not already in it
+    if ! groups | grep -q "\binput\b"; then
+        log "Adding user to input group..."
+        sudo usermod -a -G input $USER
+        log "NOTE: You will need to log out and log back in for the group changes to take effect"
+    fi
+    
+    # Load uinput module immediately
+    if ! lsmod | grep -q "^uinput"; then
+        log "Loading uinput module..."
+        sudo modprobe uinput
+    fi
+    
+    # Reload udev rules
+    log "Reloading udev rules..."
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger
+    
+    # Check if /dev/uinput exists and has correct permissions
+    if [ -c "/dev/uinput" ]; then
+        log "Checking /dev/uinput permissions..."
+        UINPUT_PERMS=$(stat -c "%a" /dev/uinput)
+        if [ "$UINPUT_PERMS" != "660" ]; then
+            log "Setting correct permissions for /dev/uinput..."
+            sudo chmod 660 /dev/uinput
+        fi
+    else
+        log "Warning: /dev/uinput device not found. You may need to reboot your system."
+    fi
+}
+
 # Get absolute path of the script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -82,6 +129,9 @@ EOF
 elif [[ -f /etc/debian_version ]] || [[ -f /etc/linuxmint/info ]]; then
     log "Setting up for Linux Mint/Debian..."
     
+    # Set up uinput for Linux
+    setup_uinput
+    
     # Create user systemd directory
     mkdir -p ~/.config/systemd/user
     
@@ -114,6 +164,11 @@ elif [[ -f /etc/debian_version ]] || [[ -f /etc/linuxmint/info ]]; then
     log "To check status: systemctl --user status dictation.service"
     log "To view logs: journalctl --user -u dictation.service"
     log "Service will automatically restart after login"
+    
+    # Remind about logging out if user was added to input group
+    if ! groups | grep -q "\binput\b"; then
+        log "IMPORTANT: You need to log out and log back in for the input group changes to take effect"
+    fi
 
 else
     log "Error: Unsupported operating system"

@@ -6,6 +6,8 @@ from typing import Any, TypeVar
 
 from pynput import keyboard
 
+from .keyboard_controller_factory import create_keyboard_controller
+
 logger = logging.getLogger(__name__)
 
 # Type definitions
@@ -25,7 +27,7 @@ class KeyboardReplayer:
     def __init__(
         self,
         callback: KeyboardCallback,
-        keyboard_controller: keyboard.Controller | None = None,
+        keyboard_controller: Any | None = None,
         typing_delay: float = DEFAULT_TYPING_DELAY,
         max_retries: int = DEFAULT_MAX_RETRIES,
         retry_delay: float = DEFAULT_RETRY_DELAY,
@@ -41,7 +43,9 @@ class KeyboardReplayer:
             retry_delay: Base delay between retry attempts in seconds
         """
         self.callback = callback
-        self.kb = keyboard_controller or keyboard.Controller()
+        self.kb = (
+            keyboard_controller or create_keyboard_controller()
+        )  # Use factory by default
         self.typing_delay = typing_delay
         self.max_retries = max_retries
         self.retry_delay = retry_delay
