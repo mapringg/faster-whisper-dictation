@@ -1,6 +1,7 @@
 import logging
 import platform
 import threading
+import time
 from collections.abc import Callable
 from enum import Enum
 
@@ -9,7 +10,7 @@ from pystray import Icon, Menu, MenuItem
 
 logger = logging.getLogger(__name__)
 
-# Global variable to hold icon instance for main thread access on macOS
+# Global variable to hold icon instance for main thread access
 _global_icon = None
 
 
@@ -303,73 +304,82 @@ class StatusIcon:
         return True
 
     def start(self):
-        """Start the status icon in a separate thread."""
+        """Start the status icon by creating the instance."""
         if self._icon:
-            logger.warning("Status icon is already running")
+            logger.warning("Status icon instance already created")
             return
 
-        # Create icon in the current thread (which should be the main thread)
+        # Create icon instance in the current thread (should be main thread)
         system = platform.system()
         icon_title = "Dictation Assistant"
-
-        # macOS and Linux handle tooltips differently
-        if system == "Darwin":  # macOS
+        if system == "Darwin":
             icon_title = "Dictation"  # Shorter title for macOS menu bar
 
-        # Create the icon on the main thread
-        self._icon = Icon(
-            name="Dictation Assistant",
-            icon=self._get_icon_image(),
-            title=icon_title,
-            menu=self._setup_menu(),
-        )
+        try:
+            self._icon = Icon(
+                name="Dictation Assistant",
+                icon=self._get_icon_image(),
+                title=icon_title,  # Use title for tooltip/initial display
+                menu=self._setup_menu(),
+            )
 
-        global _global_icon
-        _global_icon = self._icon
+            global _global_icon
+            _global_icon = self._icon
+            self._is_initialized = True
+            logger.info("Status icon instance created successfully.")
 
-        # For macOS, we'll run the icon in the main thread later
-        # For other platforms, we can use a separate thread
-        if system == "Darwin":
-            # Just prepare the icon, will be run from main thread
-            logger.info("Status icon created (will run on main thread)")
-        else:
-            # On non-macOS platforms, run in a separate thread
-            def run_icon():
+            # Start a thread to log backend info after initialization
+            def log_backend_info():
+                time.sleep(1)  # Wait for icon to initialize
                 try:
-                    self._icon.run()
+                    if hasattr(self._icon, "backend"):
+                        logger.info(
+                            f"Status icon using backend: {self._icon.backend.__class__.__name__}"
+                        )
+                    else:
+                        logger.warning("Status icon backend attribute not available")
                 except Exception as e:
-                    logger.error(f"Error in status icon thread: {e}")
+                    logger.error(f"Error getting backend info: {e}")
 
-            icon_thread = threading.Thread(target=run_icon, daemon=True)
-            icon_thread.start()
-            logger.info("Status icon started in thread")
+            backend_thread = threading.Thread(target=log_backend_info, daemon=True)
+            backend_thread.start()
 
-    def _update_macos_icon(self, new_state: StatusIconState):
-        """Update the icon appearance on macOS."""
+        except Exception as e:
+            logger.error(f"Failed to create status icon instance: {e}")
+            self._icon = None
+            _global_icon = None
+            self._is_initialized = False
+
+    def _update_icon_state_internal(self, new_state: StatusIconState):
+        """Internal method to update icon appearance and tooltip."""
         if self._icon is None:
+            logger.warning("Cannot update icon state: icon instance is None")
             return
 
         try:
-            # Update icon appearance without recreating the icon
+            # Update icon image
             self._icon.icon = self._get_icon_image()
-            self._icon.title = (
-                f"Dictation: {self._state_descriptions.get(new_state, 'Unknown state')}"
-            )
-            self._icon.menu = self._setup_menu()
-            logger.info(f"Updated macOS status icon to: {new_state.name}")
-        except Exception as e:
-            logger.error(f"Failed to update macOS status icon: {e}")
 
-    def _update_other_platform_icon(self, new_state: StatusIconState):
-        """Update the icon appearance on non-macOS platforms."""
-        if self._icon is not None:
-            self._update_icon_appearance()
-        elif not self._is_initialized:
-            self._initialize_icon()
+            # Update tooltip/title
+            description = self._state_descriptions.get(new_state, "Unknown state")
+            # pystray uses 'title' for the tooltip text
+            self._icon.title = f"Dictation: {description}"
+
+            # Update menu (refreshes when next opened)
+            self._icon.menu = self._setup_menu()
+
+            logger.info(f"Updated status icon state to: {new_state.name}")
+        except Exception as e:
+            # Catch potential errors if the icon backend is misbehaving
+            logger.error(f"Failed to update status icon appearance: {e}")
 
     def update_state(self, new_state: StatusIconState):
         """Update the status icon state and appearance."""
         with self._icon_lock:
+            if not self._is_initialized or self._icon is None:
+                logger.warning("Status icon not initialized, cannot update state.")
+                return
+
             if self._current_state == new_state:
                 return  # No state change needed
 
@@ -378,100 +388,40 @@ class StatusIcon:
             )
             self._current_state = new_state
 
-            # Use platform-specific update method
-            if platform.system() == "Darwin":
-                self._update_macos_icon(new_state)
-            else:
-                self._update_other_platform_icon(new_state)
-
-    def _initialize_icon(self):
-        """Initialize the status icon only if not already initialized."""
-        with self._icon_lock:
-            if self._is_initialized:
-                return
-
-            try:
-                # Create the icon and set up the menu
-                self._setup_icon()
-                self._is_initialized = True
-                logger.info("Status icon initialized successfully")
-            except Exception as e:
-                logger.error(f"Failed to initialize status icon: {str(e)}")
-                self._is_initialized = False
-
-    def _setup_icon(self):
-        """Set up the status icon and menu."""
-        if self._icon is not None:
-            return
-
-        try:
-            # Create icon instance
-            self._icon = Icon(
-                name="Dictation Assistant",
-                icon=self._get_icon_image(),
-                title=self._get_menu_title(),
-                menu=self._setup_menu(),
-            )
-
-            logger.info("Status icon created (will run on main thread)")
-        except Exception as e:
-            logger.error(f"Error setting up status icon: {str(e)}")
-            self._icon = None
-
-    def _update_icon_appearance(self):
-        """Update the icon appearance based on the current state."""
-        if self._icon:
-            try:
-                # Update icon appearance
-                self._icon.icon = self._get_icon_image()
-
-                # Update tooltip/title
-                description = self._state_descriptions.get(
-                    self._current_state, "Unknown state"
-                )
-                self._icon.title = f"Dictation: {description}"
-
-                # Update menu (will refresh on next open)
-                self._icon.menu = self._setup_menu()
-
-                logger.info(f"Updated status icon to: {self._current_state.name}")
-            except Exception as e:
-                logger.error(f"Failed to update status icon: {e}")
+            # Call the internal update method, regardless of platform
+            self._update_icon_state_internal(new_state)
 
     def stop(self):
         """Clean up resources when stopping the status icon."""
         logger.info("Stopping status icon")
-
+        global _global_icon
         with self._icon_lock:
-            # Clean up the icon - platform specific handling
-            global _global_icon
             if self._icon:
                 try:
-                    logger.info("Stopping icon instance")
-                    # On macOS, we may not be able to stop the icon if it's running in the main thread
-                    if platform.system() != "Darwin":
-                        self._icon.stop()
-                        logger.info("Icon stopped successfully")
-                    else:
-                        # On macOS, we can sometimes remove the reference without calling stop
-                        # since the icon will be exited by the main thread
-                        logger.info("Skipping icon.stop() on macOS")
+                    # Attempt to stop the icon. This might block or fail depending
+                    # on the state and platform, especially if called from a thread
+                    # other than the one running the icon.
+                    logger.info("Attempting to stop icon instance...")
+                    self._icon.stop()
+                    logger.info("Icon stopped successfully.")
                 except Exception as e:
+                    # Log error but continue cleanup
                     logger.error(f"Error stopping icon: {e}")
                 finally:
-                    # Ensure icon is set to None to break reference cycles
+                    # Ensure icon reference is cleared
                     self._icon = None
+                    _global_icon = None
+                    self._is_initialized = False
+            else:
+                # Ensure global ref is cleared even if self._icon was already None
+                _global_icon = None
+                self._is_initialized = False
 
-            # Reset variables
-            _global_icon = None  # Clear global reference too
-            self._is_initialized = False
+        # Force garbage collection
+        import gc
 
-            # Force garbage collection to clean up any lingering references
-            import gc
-
-            gc.collect()
-
-            logger.info("Status icon cleanup completed successfully")
+        gc.collect()
+        logger.info("Status icon cleanup completed.")
 
     def _validate_callback(self, callback: Callable, name: str) -> bool:
         """
@@ -567,24 +517,24 @@ def get_global_icon():
     return _global_icon
 
 
-def run_icon_on_macos():
+def run_icon_on_main_thread():
     """
-    Run the icon loop on macOS main thread.
+    Run the icon loop on the main thread.
     This should be called from the main thread after the app is set up.
+    It will block until the icon is stopped or exits.
     """
     global _global_icon
-    if _global_icon and platform.system() == "Darwin":
+    if _global_icon:
         try:
-            logger.info("Running status icon on main thread (macOS)")
-            # Run the icon, which will block until icon.stop() is called
-            # or until the menu's exit function returns True
+            logger.info("Running status icon loop on main thread...")
+            # This call blocks until the icon is stopped or the exit menu item returns True
             _global_icon.run()
-            logger.info("Status icon main thread loop exited")
-        except KeyboardInterrupt:
-            logger.info("Status icon interrupted by keyboard")
+            logger.info("Status icon main thread loop exited.")
         except Exception as e:
             logger.error(f"Error running icon on main thread: {e}")
         finally:
-            # Clean up global reference to prevent memory leaks
+            # Clean up global reference after the loop finishes or errors out
             _global_icon = None
-            logger.info("Status icon global reference cleared")
+            logger.info("Status icon global reference cleared after run.")
+    else:
+        logger.warning("Cannot run icon: global icon instance is None.")
