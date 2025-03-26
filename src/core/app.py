@@ -10,7 +10,11 @@ from pynput import keyboard
 from ..core.utils import loadwav, playsound
 from ..services.input_handler import DoubleKeyListener, KeyboardReplayer
 from ..services.recorder import Recorder
-from ..services.status_indicator import StatusIcon, StatusIconState
+from ..services.status_indicator import (
+    StatusIcon,
+    StatusIconState,
+    run_icon_on_main_thread,
+)
 from ..services.transcriber import GroqTranscriber, OpenAITranscriber
 from .state_machine import create_state_machine
 
@@ -39,10 +43,33 @@ class PlatformHandler(ABC):
         """Get the platform-specific cancel key for the listener."""
         pass
 
-    @abstractmethod
-    def run_key_listener(self, app, keylistener) -> None:
-        """Run the key listener in a platform-specific way."""
-        pass
+    def run_main_tasks(self, app, keylistener, cancel_listener) -> None:
+        """
+        Runs background tasks (listeners) and the main blocking task (icon).
+        This implementation is now common for all platforms.
+        """
+        # Start key listeners in separate threads
+        key_listener_thread = threading.Thread(target=keylistener.run, daemon=True)
+        cancel_listener_thread = threading.Thread(
+            target=cancel_listener.run, daemon=True
+        )
+
+        logger.info("Starting key listener threads...")
+        key_listener_thread.start()
+        cancel_listener_thread.start()
+
+        # Run the status icon loop on the main thread (this will block)
+        logger.info("Handing control to status icon main loop...")
+        run_icon_on_main_thread()
+
+        # Code below this line will only run after the icon loop exits
+        logger.info("Status icon loop finished. Waiting for listener threads...")
+
+        # Optionally wait for listener threads to finish if needed, though
+        # they are daemon threads and should exit when the main thread exits.
+        # key_listener_thread.join(timeout=1.0)
+        # cancel_listener_thread.join(timeout=1.0)
+        logger.info("Exiting application run method.")
 
 
 class MacOSHandler(PlatformHandler):
@@ -56,19 +83,6 @@ class MacOSHandler(PlatformHandler):
         """Get the macOS-specific cancel key."""
         return keyboard.Key.alt_r  # Right option key on Mac
 
-    def run_key_listener(self, app, keylistener) -> None:
-        """Run the key listener in a macOS-specific way."""
-        from ..services.status_indicator import run_icon_on_macos
-
-        # On macOS, run the key listener in a separate thread
-        # and run the icon on the main thread
-        key_listener_thread = threading.Thread(target=keylistener.run)
-        key_listener_thread.daemon = True
-        key_listener_thread.start()
-
-        # Run icon on main thread (this will block until the icon is stopped)
-        run_icon_on_macos()
-
 
 class DefaultHandler(PlatformHandler):
     """Default handler for other platforms (Linux, Windows)."""
@@ -80,11 +94,6 @@ class DefaultHandler(PlatformHandler):
     def get_cancel_key(self) -> keyboard.Key:
         """Get the default cancel key."""
         return keyboard.Key.ctrl_l  # Left control key on Linux/Windows
-
-    def run_key_listener(self, app, keylistener) -> None:
-        """Run the key listener in the default way."""
-        # On other platforms, run the key listener on the main thread
-        keylistener.run()
 
 
 class App:
@@ -644,33 +653,40 @@ class App:
             logger.error(f"Error during resource cleanup: {str(e)}")
 
     def run(self) -> None:
-        """Main application loop that handles key listening and state management."""
+        """Main application entry point."""
+        self.exit_requested = False  # Initialize exit flag
         try:
-            # Start the status icon
+            # Create the status icon instance (doesn't run the loop yet)
+            logger.info("Creating status icon instance...")
             self.status_icon.start()
+            if not self.status_icon._is_initialized:
+                raise RuntimeError("Failed to initialize status icon.")
 
             # Set up key listeners
+            logger.info("Setting up key listeners...")
             keylistener, cancel_listener = self._setup_key_listener()
 
-            # Start cancel listener in a separate thread
-            cancel_listener_thread = threading.Thread(target=cancel_listener.run)
-            cancel_listener_thread.daemon = True
-            cancel_listener_thread.start()
+            # Initialize state machine to READY
+            logger.info("Setting initial state to READY...")
+            self.m.to_READY()  # Ensure initial state and message
 
-            # Initialize state machine
-            self.m.to_READY()
-
-            # Get platform-specific handler
+            # Get platform handler
             platform_handler = PlatformHandler.get_handler()
 
-            # Run key listener in a platform-specific way
-            platform_handler.run_key_listener(self, keylistener)
+            # Run listeners in background threads and icon loop in main thread
+            platform_handler.run_main_tasks(self, keylistener, cancel_listener)
+
         except Exception as e:
-            logger.error(f"Application error: {str(e)}")
-            # Try to stop the status icon
-            if hasattr(self, "status_icon"):
-                try:
-                    self.status_icon.stop()
-                except Exception as cleanup_error:
-                    logger.error(f"Error stopping status icon: {cleanup_error}")
-            raise
+            logger.error(f"Critical application error: {str(e)}", exc_info=True)
+            # Ensure cleanup happens even on critical error during setup/run
+            self._cleanup_resources()
+            # Re-raise the exception so it's visible if run directly
+            # raise  # Commented out to prevent crash in service mode, rely on logging
+
+        finally:
+            # This block executes after the icon loop finishes or if an error occurred
+            if not self.exit_requested:
+                logger.info("Main run loop finished unexpectedly. Cleaning up...")
+                self._cleanup_resources()
+            else:
+                logger.info("Application exit requested. Cleanup handled by _exit_app.")
