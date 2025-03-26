@@ -357,8 +357,11 @@ class StatusIcon:
             return
 
         try:
+            # Create new icon image first
+            new_icon = self._get_icon_image()
+
             # Update icon image
-            self._icon.icon = self._get_icon_image()
+            self._icon.icon = new_icon
 
             # Update tooltip/title
             description = self._state_descriptions.get(new_state, "Unknown state")
@@ -367,6 +370,16 @@ class StatusIcon:
 
             # Update menu (refreshes when next opened)
             self._icon.menu = self._setup_menu()
+
+            # Force an update on Linux/GNOME by triggering a menu refresh
+            if platform.system() == "Linux":
+                try:
+                    # Small delay to allow the icon update to propagate
+                    time.sleep(0.1)
+                    # Force menu update to refresh icon
+                    self._icon.update_menu()
+                except Exception as e:
+                    logger.warning(f"Failed to force Linux icon refresh: {e}")
 
             logger.info(f"Updated status icon state to: {new_state.name}")
         except Exception as e:
@@ -384,7 +397,7 @@ class StatusIcon:
                 return  # No state change needed
 
             logger.info(
-                f"Updating status icon state from {self._current_state} to {new_state}"
+                f"Updating status icon state from {self._current_state} to {new_state} on {platform.system()}"
             )
             self._current_state = new_state
 
