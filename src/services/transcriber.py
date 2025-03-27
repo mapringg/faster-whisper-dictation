@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import tempfile
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -127,9 +126,13 @@ class BaseTranscriber(ABC):
         logger.info(f"Starting transcription with {self.__class__.__name__}...")
         audio_filename = event.kwargs.get("audio_filename", None)
         language = event.kwargs.get("language")
-        
+
         # Validate audio filename
-        if audio_filename is None or not os.path.exists(audio_filename) or os.path.getsize(audio_filename) == 0:
+        if (
+            audio_filename is None
+            or not os.path.exists(audio_filename)
+            or os.path.getsize(audio_filename) == 0
+        ):
             logger.warning("Invalid or empty audio file provided")
             self.callback(segments=[])
             return
@@ -242,11 +245,8 @@ class GroqTranscriber(BaseTranscriber):
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
         for attempt in range(self.MAX_RETRIES):
-            response = None
             try:
                 with open(temp_filename, "rb") as audio_file:
-                    files = {"file": audio_file}
-
                     # Get appropriate prompt
                     prompt = self.get_prompt(language)
 
@@ -260,6 +260,8 @@ class GroqTranscriber(BaseTranscriber):
                         data["language"] = language
                         logger.info(f"Using language: {language}")
 
+                    # Stream the file directly without loading into memory
+                    files = {"file": (os.path.basename(temp_filename), audio_file)}
                     response = requests.post(
                         self.API_ENDPOINT,
                         headers=headers,
@@ -411,11 +413,8 @@ class OpenAITranscriber(BaseTranscriber):
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
         for attempt in range(self.MAX_RETRIES):
-            response = None
             try:
                 with open(temp_filename, "rb") as audio_file:
-                    files = {"file": audio_file}
-
                     # Get appropriate prompt
                     prompt = self.get_prompt(language)
 
@@ -429,6 +428,8 @@ class OpenAITranscriber(BaseTranscriber):
                         data["language"] = language
                         logger.info(f"Using language: {language}")
 
+                    # Stream the file directly without loading into memory
+                    files = {"file": (os.path.basename(temp_filename), audio_file)}
                     response = requests.post(
                         self.API_ENDPOINT,
                         headers=headers,
