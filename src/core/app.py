@@ -60,7 +60,7 @@ class PlatformHandler(ABC):
 
         # Run the status icon loop on the main thread (this will block)
         logger.info("Handing control to status icon main loop...")
-        run_icon_on_main_thread()
+        run_icon_on_main_thread(app.status_icon._icon)
 
         # Code below this line will only run after the icon loop exits
         logger.info("Status icon loop finished. Waiting for listener threads...")

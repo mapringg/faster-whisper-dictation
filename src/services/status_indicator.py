@@ -11,9 +11,6 @@ from pystray import Icon, Menu, MenuItem
 
 logger = logging.getLogger(__name__)
 
-# Global variable to hold icon instance for main thread access
-_global_icon = None
-
 
 class StatusIconState(Enum):
     """States for the status icon."""
@@ -322,8 +319,6 @@ class StatusIcon:
                 menu=self._setup_menu(),
             )
 
-            global _global_icon
-            _global_icon = self._icon
             self._is_initialized = True
             logger.info("Status icon instance created successfully.")
             
@@ -474,7 +469,6 @@ class StatusIcon:
     def stop(self):
         """Clean up resources when stopping the status icon."""
         logger.info("Stopping status icon")
-        global _global_icon
         with self._icon_lock:
             if self._icon:
                 try:
@@ -490,11 +484,8 @@ class StatusIcon:
                 finally:
                     # Ensure icon reference is cleared
                     self._icon = None
-                    _global_icon = None
                     self._is_initialized = False
             else:
-                # Ensure global ref is cleared even if self._icon was already None
-                _global_icon = None
                 self._is_initialized = False
 
         # Force garbage collection
@@ -591,20 +582,17 @@ class StatusIcon:
             self._icon.menu = self._setup_menu()
 
 
-def get_global_icon():
-    """Get the global icon instance for main thread access."""
-    global _global_icon
-    return _global_icon
 
-
-def run_icon_on_main_thread():
+def run_icon_on_main_thread(icon_instance):
     """
     Run the icon loop on the main thread.
     This should be called from the main thread after the app is set up.
     It will block until the icon is stopped or exits.
+    
+    Args:
+        icon_instance: The pystray.Icon instance to run
     """
-    global _global_icon
-    if _global_icon:
+    if icon_instance:
         try:
             logger.info("Running status icon loop on main thread...")
             
@@ -616,8 +604,8 @@ def run_icon_on_main_thread():
                 
                 def process_queue_wrapper():
                     while should_continue[0]:
-                        if _global_icon and hasattr(_global_icon, "_process_queue"):
-                            if not _global_icon._process_queue():
+                        if icon_instance and hasattr(icon_instance, "_process_queue"):
+                            if not icon_instance._process_queue():
                                 break
                         time.sleep(0.1)  # 100ms interval
                 
@@ -625,20 +613,16 @@ def run_icon_on_main_thread():
                 queue_thread.start()
                 
                 # This call blocks until the icon is stopped or the exit menu item returns True
-                _global_icon.run()
+                icon_instance.run()
                 
                 # Signal queue processing thread to stop
                 should_continue[0] = False
             else:
                 # On Linux/macOS, we've already set up native timers in start()
-                _global_icon.run()
+                icon_instance.run()
                 
             logger.info("Status icon main thread loop exited.")
         except Exception as e:
             logger.error(f"Error running icon on main thread: {e}")
-        finally:
-            # Clean up global reference after the loop finishes or errors out
-            _global_icon = None
-            logger.info("Status icon global reference cleared after run.")
     else:
         logger.warning("Cannot run icon: global icon instance is None.")
