@@ -7,25 +7,6 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
-# Check for user exit marker file
-if [ -f "/tmp/dictation_user_exit" ]; then
-    log "User requested exit. Not restarting service."
-    # Remove the marker file after reading
-    rm -f "/tmp/dictation_user_exit"
-    # For macOS, ensure the LaunchAgent is unloaded
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        log "Ensuring macOS LaunchAgent is unloaded"
-        launchctl unload ~/Library/LaunchAgents/com.user.dictation.plist 2>/dev/null || true
-    # For Linux with systemd
-    elif [ -f /etc/debian_version ] || [ -f /etc/linuxmint/info ]; then
-        if command -v systemctl &>/dev/null; then
-            log "Ensuring systemd service is stopped"
-            systemctl --user stop dictation.service 2>/dev/null || true
-        fi
-    fi
-    # Exit without starting the app
-    exit 0
-fi
 
 # Check if we're in the correct directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

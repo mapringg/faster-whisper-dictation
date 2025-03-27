@@ -291,22 +291,16 @@ class StatusIcon:
         """Handle exit from the menu."""
         logger.info("Exit selected from status icon menu")
 
-        # Stop icon if possible (for non-macOS platforms)
-        try:
-            if self._icon and platform.system() != "Darwin":
-                logger.info("Stopping icon directly")
-                # This won't work on macOS, but helps on other platforms
-                self._icon.stop()
-        except Exception as e:
-            logger.warning(f"Failed to stop icon directly: {e}")
+        # Queue a shutdown message first
+        self.update_queue.put({'action': 'shutdown'})
 
-        # Call the exit callback last
+        # Call the exit callback
         if self.on_exit:
             logger.info("Calling application exit handler")
             self.on_exit()
 
-        # This tells pystray to exit (though it may not take effect on all platforms)
-        return True
+        # Return False to let the main loop handle shutdown
+        return False
 
     def start(self):
         """Start the status icon by creating the instance."""
@@ -485,8 +479,12 @@ class StatusIcon:
                 self._update_icon_state_internal(current_state)
             elif message['action'] == 'shutdown':
                 # Handle shutdown request
+                logger.info("Processing shutdown request from queue")
                 if self._icon:
-                    self._icon.stop()
+                    try:
+                        self._icon.stop()
+                    except Exception as e:
+                        logger.error(f"Error stopping icon: {e}")
                 return False  # Stop processing
                 
             # Mark task as done
@@ -627,31 +625,27 @@ def run_icon_on_main_thread(icon_instance):
         try:
             logger.info("Running status icon loop on main thread...")
             
-            # For platforms where we couldn't set up a native timer,
-            # we need to handle queue processing ourselves
-            if platform.system() not in ["Linux", "Darwin"]:
-                # Create and start a thread to process queue while icon is running
-                should_continue = [True]  # Use a list for mutable reference
-                
-                def process_queue_wrapper():
-                    while should_continue[0]:
-                        if icon_instance and hasattr(icon_instance, "_process_queue"):
-                            if not icon_instance._process_queue():
-                                break
-                        time.sleep(0.1)  # 100ms interval
-                
-                queue_thread = threading.Thread(target=process_queue_wrapper, daemon=True)
-                queue_thread.start()
-                
-                # This call blocks until the icon is stopped or the exit menu item returns True
-                icon_instance.run()
-                
-                # Signal queue processing thread to stop
-                should_continue[0] = False
-            else:
-                # On Linux/macOS, we've already set up native timers in start()
-                icon_instance.run()
-                
+            # Create and start a thread to process queue while icon is running
+            should_continue = [True]  # Use a list for mutable reference
+            
+            def process_queue_wrapper():
+                while should_continue[0]:
+                    if icon_instance and hasattr(icon_instance, "_process_queue"):
+                        if not icon_instance._process_queue():
+                            should_continue[0] = False
+                            break
+                    time.sleep(0.1)  # 100ms interval
+            
+            queue_thread = threading.Thread(target=process_queue_wrapper, daemon=True)
+            queue_thread.start()
+            
+            # This call blocks until the icon is stopped
+            icon_instance.run()
+            
+            # Signal queue processing thread to stop
+            should_continue[0] = False
+            queue_thread.join(timeout=1.0)
+            
             logger.info("Status icon main thread loop exited.")
         except Exception as e:
             logger.error(f"Error running icon on main thread: {e}")

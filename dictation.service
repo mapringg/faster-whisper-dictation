@@ -7,10 +7,11 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
+KillSignal=SIGTERM
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 WorkingDirectory=@@WORKING_DIR@@
 ExecStart=/bin/bash @@EXEC_START@@
-Restart=on-failure
+Restart=no
 RestartSec=10
 TimeoutStartSec=30
 

@@ -103,7 +103,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <true/>
+    <false/>
     <key>StandardOutPath</key>
     <string>/tmp/dictation.stdout.log</string>
     <key>StandardErrorPath</key>
@@ -120,7 +120,7 @@ EOF
     # Load the service
     log "Loading launchd service"
     launchctl unload ~/Library/LaunchAgents/com.user.dictation.plist 2>/dev/null || true
-    launchctl load ~/Library/LaunchAgents/com.user.dictation.plist
+    launchctl load -w ~/Library/LaunchAgents/com.user.dictation.plist
     
     log "macOS setup complete!"
     log "To check status: launchctl list | grep com.user.dictation"

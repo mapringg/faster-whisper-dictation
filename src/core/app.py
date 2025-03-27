@@ -1,5 +1,6 @@
 import logging
 import platform
+import signal
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -37,6 +38,7 @@ class App:
             args: Parsed command line arguments
         """
         self.args = args
+        self.shutdown_event = threading.Event()
         self.language = args.language
         self.timer_active = threading.Event()
         self.last_state_change = 0
@@ -141,116 +143,17 @@ class App:
         # Start the actual replaying
         self._safe_start_replay(event)
 
+    def signal_handler(self, signum, frame):
+        """Handle shutdown signals gracefully."""
+        logger.warning(f"Received signal {signum}. Initiating shutdown...")
+        self.shutdown_event.set()
+
     def _exit_app(self):
         """Handle exit request from the status icon menu."""
-        logger.info("Exit requested from status icon")
-        # Set exit flag for graceful shutdown
-        self.exit_requested = True
-
-        # Queue a shutdown message for the status icon
-        with self.status_icon_lock:
-            if hasattr(self.status_icon, 'update_queue'):
-                try:
-                    self.status_icon.update_queue.put({'action': 'shutdown'})
-                except Exception as e:
-                    logger.error(f"Error queueing shutdown: {e}")
-
-        # Perform any necessary cleanup
-        self._cleanup_resources()
-
-        # Platform-specific service management
-        import os
-        import platform
-        import shutil
-        import subprocess
-        import sys
-        import time
-
-        system = platform.system()
-
-        # Create a marker file to indicate user-initiated exit (used by run.sh)
-        # Creating this BEFORE stopping the service ensures run.sh won't restart
-        try:
-            logger.info("Creating exit marker file")
-            with open("/tmp/dictation_user_exit", "w") as f:
-                f.write("1")
-        except Exception as e:
-            logger.error(f"Failed to create exit marker file: {e}")
-
-        # On macOS, unload the LaunchAgent
-        if system == "Darwin":
-            try:
-                logger.info("Attempting to unload macOS LaunchAgent")
-                # Use full path expansion for home directory
-                home_dir = os.path.expanduser("~")
-                plist_path = os.path.join(
-                    home_dir, "Library/LaunchAgents/com.user.dictation.plist"
-                )
-
-                # Use subprocess with expanded path, not shell=True
-                subprocess.run(
-                    ["launchctl", "unload", plist_path],
-                    check=False,
-                    capture_output=True,
-                )
-
-                # Verify the service is unloaded
-                result = subprocess.run(
-                    ["launchctl", "list", "com.user.dictation"],
-                    check=False,
-                    capture_output=True,
-                )
-
-                if result.returncode != 0:
-                    logger.info("LaunchAgent successfully unloaded")
-                else:
-                    logger.warning("LaunchAgent may still be loaded")
-
-            except Exception as e:
-                logger.error(f"Failed to unload LaunchAgent: {e}")
-
-        # On Linux with systemd, try to stop the user service
-        elif os.path.exists("/etc/debian_version") or os.path.exists(
-            "/etc/linuxmint/info"
-        ):
-            if shutil.which("systemctl"):
-                try:
-                    logger.info("Attempting to stop systemd user service")
-                    subprocess.run(
-                        ["systemctl", "--user", "stop", "dictation.service"],
-                        check=False,
-                        capture_output=True,
-                    )
-
-                    # Verify the service is stopped
-                    result = subprocess.run(
-                        ["systemctl", "--user", "is-active", "dictation.service"],
-                        check=False,
-                        capture_output=True,
-                    )
-
-                    if b"inactive" in result.stdout or b"failed" in result.stdout:
-                        logger.info("Systemd service successfully stopped")
-                    else:
-                        logger.warning("Systemd service may still be running")
-
-                except Exception as e:
-                    logger.error(f"Failed to stop systemd service: {e}")
-
-        # Make sure any file operations have completed
-        try:
-            sys.stdout.flush()
-            sys.stderr.flush()
-        except Exception:
-            pass
-
-        # Small delay to ensure subprocess operations and file writes complete
-        time.sleep(0.5)
-
-        logger.info("Exiting application completely")
-        # Use os._exit to force immediate termination of the process
-        # This is needed because regular sys.exit() might not work if we're in a daemon thread
-        os._exit(0)
+        logger.info("Exit requested via menu. Initiating shutdown...")
+        self.shutdown_event.set()
+        # Return False to let the main loop handle shutdown
+        return False
 
     def _toggle_sounds(self, enabled: bool):
         """Toggle sound effects on/off."""
@@ -617,7 +520,10 @@ class App:
 
     def run(self) -> None:
         """Main application entry point."""
-        self.exit_requested = False  # Initialize exit flag
+        # Register signal handlers
+        signal.signal(signal.SIGINT, self.signal_handler)  # Handle Ctrl+C
+        signal.signal(signal.SIGTERM, self.signal_handler) # Handle kill/systemd stop
+        
         try:
             # Create the status icon instance (doesn't run the loop yet)
             logger.info("Creating status icon instance...")
@@ -646,20 +552,13 @@ class App:
             logger.info("Handing control to status icon main loop...")
             run_icon_on_main_thread(self.status_icon._icon)
 
-            logger.info("Status icon loop finished. Waiting for listener threads...")
-            logger.info("Exiting application run method.")
-
+            logger.info("Status icon loop finished. Shutting down...")
+            
         except Exception as e:
             logger.error(f"Critical application error: {str(e)}", exc_info=True)
-            # Ensure cleanup happens even on critical error during setup/run
-            self._cleanup_resources()
-            # Re-raise the exception so it's visible if run directly
-            # raise  # Commented out to prevent crash in service mode, rely on logging
-
+            self.shutdown_event.set()
+            
         finally:
-            # This block executes after the icon loop finishes or if an error occurred
-            if not self.exit_requested:
-                logger.info("Main run loop finished unexpectedly. Cleaning up...")
-                self._cleanup_resources()
-            else:
-                logger.info("Application exit requested. Cleanup handled by _exit_app.")
+            logger.info("Entering final cleanup phase.")
+            self._cleanup_resources()
+            logger.info("Application finished.")
