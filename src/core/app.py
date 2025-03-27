@@ -21,79 +21,6 @@ from .state_machine import create_state_machine
 logger = logging.getLogger(__name__)
 
 
-class PlatformHandler(ABC):
-    """Abstract base class for platform-specific behavior."""
-
-    @staticmethod
-    def get_handler():
-        """Factory method to get the appropriate platform handler."""
-        system = platform.system()
-        if system == "Darwin":
-            return MacOSHandler()
-        else:
-            return DefaultHandler()
-
-    @abstractmethod
-    def get_cancel_key_name(self) -> str:
-        """Get the platform-specific cancel key name for user messages."""
-        pass
-
-    @abstractmethod
-    def get_cancel_key(self) -> keyboard.Key:
-        """Get the platform-specific cancel key for the listener."""
-        pass
-
-    def run_main_tasks(self, app, keylistener, cancel_listener) -> None:
-        """
-        Runs background tasks (listeners) and the main blocking task (icon).
-        This implementation is now common for all platforms.
-        """
-        # Start key listeners in separate threads
-        key_listener_thread = threading.Thread(target=keylistener.run, daemon=True)
-        cancel_listener_thread = threading.Thread(
-            target=cancel_listener.run, daemon=True
-        )
-
-        logger.info("Starting key listener threads...")
-        key_listener_thread.start()
-        cancel_listener_thread.start()
-
-        # Run the status icon loop on the main thread (this will block)
-        logger.info("Handing control to status icon main loop...")
-        run_icon_on_main_thread(app.status_icon._icon)
-
-        # Code below this line will only run after the icon loop exits
-        logger.info("Status icon loop finished. Waiting for listener threads...")
-
-        # Optionally wait for listener threads to finish if needed, though
-        # they are daemon threads and should exit when the main thread exits.
-        # key_listener_thread.join(timeout=1.0)
-        # cancel_listener_thread.join(timeout=1.0)
-        logger.info("Exiting application run method.")
-
-
-class MacOSHandler(PlatformHandler):
-    """Handler for macOS-specific behavior."""
-
-    def get_cancel_key_name(self) -> str:
-        """Get the macOS-specific cancel key name."""
-        return "right option"
-
-    def get_cancel_key(self) -> keyboard.Key:
-        """Get the macOS-specific cancel key."""
-        return keyboard.Key.alt_r  # Right option key on Mac
-
-
-class DefaultHandler(PlatformHandler):
-    """Default handler for other platforms (Linux, Windows)."""
-
-    def get_cancel_key_name(self) -> str:
-        """Get the default cancel key name."""
-        return "left control"
-
-    def get_cancel_key(self) -> keyboard.Key:
-        """Get the default cancel key."""
-        return keyboard.Key.ctrl_l  # Left control key on Linux/Windows
 
 
 class App:
@@ -116,6 +43,14 @@ class App:
         self.state_change_delay = 0.5  # Minimum delay between state changes in seconds
         self.status_icon_lock = threading.Lock()  # Add lock for status icon operations
         self.config_lock = threading.Lock()  # Add lock for configuration settings
+
+        # Determine platform-specific cancel key
+        if platform.system() == "Darwin":
+            self.cancel_key = keyboard.Key.alt_r  # Right Option
+            self.cancel_key_name = "right option"
+        else: # Linux, Windows (assuming Left Ctrl)
+            self.cancel_key = keyboard.Key.ctrl_l # Left Control
+            self.cancel_key_name = "left control"
 
         # Start timer monitoring thread
         self.timer_thread = threading.Thread(target=self._timer_loop, daemon=True)
@@ -167,14 +102,10 @@ class App:
     def _on_enter_ready(self, *_):
         """Callback that runs when entering READY state."""
         with self.status_icon_lock:
-            # Get the platform-specific cancel key name using the handler
-            platform_handler = PlatformHandler.get_handler()
-            cancel_key_name = platform_handler.get_cancel_key_name()
-
             logger.info(
                 f"Double tap {self.args.trigger_key} to start recording. "
                 f"Tap once to stop recording. "
-                f"Double tap {cancel_key_name} to cancel recording."
+                f"Double tap {self.cancel_key_name} to cancel recording."
             )
             self.status_icon.update_state(StatusIconState.READY)
 
@@ -614,14 +545,11 @@ class App:
             tuple: (main_listener, cancel_listener)
         """
         try:
-            # Get platform-specific handler
-            platform_handler = PlatformHandler.get_handler()
-
             # Normalize trigger key
             trigger_key = self._normalize_key(self.args.trigger_key)
 
-            # Get platform-specific cancel key
-            cancel_key = platform_handler.get_cancel_key()
+            # Use stored platform-specific key
+            cancel_key = self.cancel_key
 
             # Main trigger key listener
             key_listener = DoubleKeyListener(self.start, self.stop, trigger_key)
@@ -705,11 +633,21 @@ class App:
             logger.info("Setting initial state to READY...")
             self.m.to_READY()  # Ensure initial state and message
 
-            # Get platform handler
-            platform_handler = PlatformHandler.get_handler()
+            # Start key listeners in separate threads
+            key_listener_thread = threading.Thread(target=keylistener.run, daemon=True)
+            cancel_listener_thread = threading.Thread(
+                target=cancel_listener.run, daemon=True
+            )
 
-            # Run listeners in background threads and icon loop in main thread
-            platform_handler.run_main_tasks(self, keylistener, cancel_listener)
+            logger.info("Starting key listener threads...")
+            key_listener_thread.start()
+            cancel_listener_thread.start()
+
+            logger.info("Handing control to status icon main loop...")
+            run_icon_on_main_thread(self.status_icon._icon)
+
+            logger.info("Status icon loop finished. Waiting for listener threads...")
+            logger.info("Exiting application run method.")
 
         except Exception as e:
             logger.error(f"Critical application error: {str(e)}", exc_info=True)
