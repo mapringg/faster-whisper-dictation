@@ -115,6 +115,7 @@ class App:
         self.last_state_change = 0
         self.state_change_delay = 0.5  # Minimum delay between state changes in seconds
         self.status_icon_lock = threading.Lock()  # Add lock for status icon operations
+        self.config_lock = threading.Lock()  # Add lock for configuration settings
 
         # Start timer monitoring thread
         self.timer_thread = threading.Thread(target=self._timer_loop, daemon=True)
@@ -304,12 +305,14 @@ class App:
 
     def _toggle_sounds(self, enabled: bool):
         """Toggle sound effects on/off."""
-        self.enable_sounds = enabled
+        with self.config_lock:
+            self.enable_sounds = enabled
         logger.info(f"Sound effects {'enabled' if enabled else 'disabled'}")
 
     def _change_language(self, language_code: str):
         """Change the transcription language."""
-        self.language = language_code
+        with self.config_lock:
+            self.language = language_code
         logger.info(f"Language changed to: {language_code}")
 
     def _change_transcriber(self, transcriber_id: str):
@@ -322,19 +325,21 @@ class App:
                 self.status_icon.update_state(StatusIconState.ERROR)
                 return
 
-            # Create new transcriber instance with appropriate model name
-            if transcriber_id == "openai":
-                self.transcriber = OpenAITranscriber(
-                    self.m.finish_transcribing, model_name
-                )
-            else:  # groq
-                self.transcriber = GroqTranscriber(
-                    self.m.finish_transcribing, model_name
-                )
+            with self.config_lock:
+                # Create new transcriber instance with appropriate model name
+                if transcriber_id == "openai":
+                    self.transcriber = OpenAITranscriber(
+                        self.m.finish_transcribing, model_name
+                    )
+                else:  # groq
+                    self.transcriber = GroqTranscriber(
+                        self.m.finish_transcribing, model_name
+                    )
 
-            # Update the stored model name
-            self.args.model_name = model_name
-            self.args.transcriber = transcriber_id
+                # Update the stored model name
+                self.args.model_name = model_name
+                self.args.transcriber = transcriber_id
+            
             logger.info(
                 f"Transcriber changed to: {transcriber_id} with model: {model_name}"
             )
@@ -444,7 +449,9 @@ class App:
             wait: Whether to wait for sound to finish playing
         """
         # Skip if sounds are disabled
-        if not self.enable_sounds:
+        with self.config_lock:
+            play_sound = self.enable_sounds
+        if not play_sound:
             return
 
         sound = self.SOUND_EFFECTS.get(sound_name)
@@ -476,7 +483,9 @@ class App:
                 if self.args.max_time:
                     self.timer_active.set()
 
-                self.m.start_recording(language=self.language)
+                with self.config_lock:
+                    current_language = self.language
+                self.m.start_recording(language=current_language)
                 self.last_state_change = time.time()
                 return True
             except Exception as e:
