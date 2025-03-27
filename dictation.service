@@ -8,8 +8,8 @@ StartLimitBurst=5
 [Service]
 Type=simple
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-WorkingDirectory=%h/Developer/faster-whisper-dictation
-ExecStart=/bin/bash %h/Developer/faster-whisper-dictation/run.sh
+WorkingDirectory=@@WORKING_DIR@@
+ExecStart=/bin/bash @@EXEC_START@@
 Restart=on-failure
 RestartSec=10
 TimeoutStartSec=30

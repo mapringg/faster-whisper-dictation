@@ -135,8 +135,11 @@ elif [[ -f /etc/debian_version ]] || [[ -f /etc/linuxmint/info ]]; then
     # Create user systemd directory
     mkdir -p ~/.config/systemd/user
     
-    # Copy service file
-    cp dictation.service ~/.config/systemd/user/
+    # Create service file with correct paths
+    log "Creating systemd service file with correct paths..."
+    sed -e "s|@@WORKING_DIR@@|$SCRIPT_DIR|g" \
+        -e "s|@@EXEC_START@@|$SCRIPT_DIR/run.sh|g" \
+        dictation.service > ~/.config/systemd/user/dictation.service
     
     # Set up autostart
     mkdir -p ~/.config/autostart
