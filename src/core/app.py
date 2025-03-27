@@ -197,6 +197,14 @@ class App:
         # Set exit flag for graceful shutdown
         self.exit_requested = True
 
+        # Queue a shutdown message for the status icon
+        with self.status_icon_lock:
+            if hasattr(self.status_icon, 'update_queue'):
+                try:
+                    self.status_icon.update_queue.put({'action': 'shutdown'})
+                except Exception as e:
+                    logger.error(f"Error queueing shutdown: {e}")
+
         # Perform any necessary cleanup
         self._cleanup_resources()
 

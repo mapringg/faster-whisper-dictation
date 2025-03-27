@@ -1,5 +1,6 @@
 import logging
 import platform
+import queue
 import threading
 import time
 from collections.abc import Callable
@@ -50,6 +51,7 @@ class StatusIcon:
         self._current_language = "en"  # Default to English
         self._transcriber_callback = None
         self._current_transcriber = "openai"  # Default to OpenAI
+        self.update_queue = queue.Queue()
         self._transcribers = {
             "openai": "OpenAI",
             "groq": "Groq",
@@ -176,9 +178,8 @@ class StatusIcon:
         if self._language_callback and language_code != self._current_language:
             self._current_language = language_code
             self._language_callback(language_code)
-            # Update menu
-            if self._icon:
-                self._icon.menu = self._setup_menu()
+            # Queue menu update
+            self.update_queue.put({'action': 'update_menu'})
         return False  # Don't close the menu
 
     def _select_transcriber(self, transcriber_id):
@@ -186,9 +187,8 @@ class StatusIcon:
         if self._transcriber_callback and transcriber_id != self._current_transcriber:
             self._current_transcriber = transcriber_id
             self._transcriber_callback(transcriber_id)
-            # Update menu
-            if self._icon:
-                self._icon.menu = self._setup_menu()
+            # Queue menu update
+            self.update_queue.put({'action': 'update_menu'})
         return False  # Don't close the menu
 
     def _add_transcriber_menu_items(self, menu_items: list):
@@ -277,9 +277,8 @@ class StatusIcon:
         if self._sound_toggle_callback:
             self._sounds_enabled = not self._sounds_enabled
             self._sound_toggle_callback(self._sounds_enabled)
-            # Update menu
-            if self._icon:
-                self._icon.menu = self._setup_menu()
+            # Queue menu update
+            self.update_queue.put({'action': 'update_menu'})
         return False  # Don't close the menu
 
     def _exit(self):
@@ -327,6 +326,41 @@ class StatusIcon:
             _global_icon = self._icon
             self._is_initialized = True
             logger.info("Status icon instance created successfully.")
+            
+            # Set up periodic queue processing on the appropriate main thread mechanism
+            if system == "Linux":
+                try:
+                    # Use GLib.timeout_add if available (for GTK-based backend)
+                    import gi
+                    gi.require_version('GLib', '2.0')
+                    from gi.repository import GLib
+                    # Process queue every 100ms
+                    GLib.timeout_add(100, self._process_queue)
+                    logger.info("Using GLib.timeout_add for queue processing")
+                except (ImportError, ValueError):
+                    logger.warning("GLib not available, using fallback for queue processing")
+            elif system == "Darwin":
+                try:
+                    # Use AppKit timer for macOS
+                    import AppKit
+                    import Foundation
+                    # Create a timer to process the queue
+                    self._timer = Foundation.NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                        0.1,  # 100ms interval
+                        self._icon,  # Target object
+                        "processQueue:",  # Selector name
+                        None,  # User info
+                        True  # Repeats
+                    )
+                    # Add method to icon instance dynamically (Python allows this)
+                    self._icon.processQueue_ = lambda sender: self._process_queue()
+                    logger.info("Using AppKit timer for queue processing")
+                except ImportError:
+                    logger.warning("AppKit not available, using fallback for queue processing")
+            else:
+                # For Windows or other platforms
+                # We'll rely on run_icon_on_main_thread implementation
+                logger.info("Using generic queue processing for this platform")
 
             # Start a thread to log backend info after initialization
             def log_backend_info():
@@ -401,9 +435,42 @@ class StatusIcon:
             )
             self._current_state = new_state
 
-            # Call the internal update method, regardless of platform
-            self._update_icon_state_internal(new_state)
+            # Queue the update instead of calling directly
+            self.update_queue.put({'action': 'set_state', 'state': new_state})
 
+    def _process_queue(self):
+        """
+        Process a single item from the update queue on the main thread.
+        This method should be called periodically from the main thread.
+        """
+        try:
+            # Get one message from the queue, non-blocking
+            try:
+                message = self.update_queue.get(block=False)
+            except queue.Empty:
+                # No messages, just return and we'll check again later
+                return True  # Continue processing
+                
+            # Process the message
+            if message['action'] == 'set_state':
+                self._update_icon_state_internal(message['state'])
+            elif message['action'] == 'update_menu':
+                if self._icon:
+                    self._icon.menu = self._setup_menu()
+            elif message['action'] == 'shutdown':
+                # Handle shutdown request
+                if self._icon:
+                    self._icon.stop()
+                return False  # Stop processing
+                
+            # Mark task as done
+            self.update_queue.task_done()
+            
+        except Exception as e:
+            logger.error(f"Error processing icon queue: {e}")
+            
+        return True  # Continue processing
+            
     def stop(self):
         """Clean up resources when stopping the status icon."""
         logger.info("Stopping status icon")
@@ -540,8 +607,32 @@ def run_icon_on_main_thread():
     if _global_icon:
         try:
             logger.info("Running status icon loop on main thread...")
-            # This call blocks until the icon is stopped or the exit menu item returns True
-            _global_icon.run()
+            
+            # For platforms where we couldn't set up a native timer,
+            # we need to handle queue processing ourselves
+            if platform.system() not in ["Linux", "Darwin"]:
+                # Create and start a thread to process queue while icon is running
+                should_continue = [True]  # Use a list for mutable reference
+                
+                def process_queue_wrapper():
+                    while should_continue[0]:
+                        if _global_icon and hasattr(_global_icon, "_process_queue"):
+                            if not _global_icon._process_queue():
+                                break
+                        time.sleep(0.1)  # 100ms interval
+                
+                queue_thread = threading.Thread(target=process_queue_wrapper, daemon=True)
+                queue_thread.start()
+                
+                # This call blocks until the icon is stopped or the exit menu item returns True
+                _global_icon.run()
+                
+                # Signal queue processing thread to stop
+                should_continue[0] = False
+            else:
+                # On Linux/macOS, we've already set up native timers in start()
+                _global_icon.run()
+                
             logger.info("Status icon main thread loop exited.")
         except Exception as e:
             logger.error(f"Error running icon on main thread: {e}")
