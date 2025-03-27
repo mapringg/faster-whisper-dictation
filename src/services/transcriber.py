@@ -119,62 +119,24 @@ class BaseTranscriber(ABC):
         Handle the transcription process from audio input to text output.
 
         Args:
-            event: State machine event containing audio data and language info
+            event: State machine event containing audio filename and language info
 
         Returns:
             None: Results are passed to the callback function
         """
         logger.info(f"Starting transcription with {self.__class__.__name__}...")
-        audio = event.kwargs.get("audio", None)
+        audio_filename = event.kwargs.get("audio_filename", None)
         language = event.kwargs.get("language")
-        temp_filename = None
-
-        # Validate audio input
-        if audio is None or not isinstance(audio, np.ndarray) or audio.size == 0:
-            logger.warning("Invalid audio data provided")
+        
+        # Validate audio filename
+        if audio_filename is None or not os.path.exists(audio_filename) or os.path.getsize(audio_filename) == 0:
+            logger.warning("Invalid or empty audio file provided")
             self.callback(segments=[])
             return
-
-        # Validate audio format
-        if audio.dtype != np.float32:
-            logger.warning(f"Audio data has incorrect dtype: {audio.dtype}")
-            self.callback(segments=[])
-            return
-
-        # Release reference to the audio object when we're done with it
-        # to avoid memory leaks
-        def cleanup_audio():
-            nonlocal audio
-            if audio is not None:
-                # Release reference to avoid circular references/memory leaks
-                audio = None
-                # Force garbage collection
-                import gc
-
-                gc.collect()
 
         try:
-            # Get appropriate file extension
-            file_extension = self.get_file_extension()
-
-            # Save audio to a temporary file
-            with tempfile.NamedTemporaryFile(
-                suffix=file_extension, delete=False
-            ) as temp_file:
-                temp_filename = temp_file.name
-
-            # Save audio and handle potential errors
-            if not self.save_audio(audio, temp_filename):
-                logger.error(f"Failed to save audio to {file_extension} temporary file")
-                self.callback(segments=[])
-                cleanup_audio()
-                return
-
-            # We don't need the audio data in memory anymore once saved to disk
-            cleanup_audio()
-
             # Make API request and handle response
-            result = self.make_api_request(temp_filename, language)
+            result = self.make_api_request(audio_filename, language)
 
             if result:
                 text = result.get("text", "")
@@ -196,14 +158,11 @@ class BaseTranscriber(ABC):
             self.callback(segments=[])
 
         finally:
-            # Always ensure audio is cleaned up
-            cleanup_audio()
-
             # Clean up the temporary file
             try:
-                if temp_filename and os.path.exists(temp_filename):
-                    os.unlink(temp_filename)
-                    logger.info(f"Temporary file {temp_filename} deleted")
+                if audio_filename and os.path.exists(audio_filename):
+                    os.unlink(audio_filename)
+                    logger.info(f"Temporary file {audio_filename} deleted")
             except Exception as e:
                 logger.error(f"Error deleting temporary file: {str(e)}")
 
