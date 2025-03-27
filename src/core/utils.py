@@ -86,24 +86,38 @@ def playsound(data, wait=True):
         # First try with the default device
         try:
             if output_device is not None and output_device < len(devices):
-                sd.play(data, device=output_device)
-                if wait:
-                    sd.wait()
-                return
+                try:
+                    sd.play(data, device=output_device)
+                    if wait:
+                        sd.wait()
+                    return
+                except sd.PortAudioError as e:
+                    logger.warning(
+                        f"Playback failed on default device: {str(e)}, trying fallback options"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Could not play on default device: {str(e)}, trying fallback options"
+                    )
         except Exception as e:
             logger.warning(
-                f"Could not play on default device: {str(e)}, trying fallback options"
+                f"Could not access default device: {str(e)}, trying fallback options"
             )
 
         # If default device fails, try system default (without specifying device)
         try:
             logger.info("Trying system default output device")
-            sd.play(data)
-            if wait:
-                sd.wait()
-            return
+            try:
+                sd.play(data)
+                if wait:
+                    sd.wait()
+                return
+            except sd.PortAudioError as e:
+                logger.error(f"Playback failed on system default: {str(e)}")
+            except Exception as e:
+                logger.error(f"Error playing on system default: {str(e)}")
         except Exception as e:
-            logger.error(f"Error playing on system default: {str(e)}")
+            logger.error(f"Error accessing system default device: {str(e)}")
 
         logger.error("No available output device found for playback")
     except Exception as e:

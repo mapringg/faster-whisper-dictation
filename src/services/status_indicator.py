@@ -255,6 +255,9 @@ class StatusIcon:
 
         sound_text = "Enable Sounds" if not self._sounds_enabled else "Disable Sounds"
         menu_items.append(MenuItem(sound_text, self._toggle_sounds))
+        
+        # Add refresh audio devices option
+        menu_items.append(MenuItem("Refresh Audio Devices", self._refresh_audio_devices))
 
     def _setup_menu(self):
         """Create the right-click menu for the icon."""
@@ -269,6 +272,12 @@ class StatusIcon:
 
         return Menu(*menu_items)
 
+    def _refresh_audio_devices(self):
+        """Refresh audio devices and update the menu."""
+        # Queue a message to refresh audio devices
+        self.update_queue.put({'action': 'refresh_devices'})
+        return False  # Don't close the menu
+        
     def _toggle_sounds(self):
         """Toggle sound effects and update the menu."""
         if self._sound_toggle_callback:
@@ -452,6 +461,28 @@ class StatusIcon:
             elif message['action'] == 'update_menu':
                 if self._icon:
                     self._icon.menu = self._setup_menu()
+            elif message['action'] == 'refresh_devices':
+                # Import here to avoid circular imports
+                from ..core.utils import refresh_devices
+                
+                # Refresh devices and provide feedback via icon state
+                current_state = self._current_state
+                self._update_icon_state_internal(StatusIconState.TRANSCRIBING)  # Use as "busy" indicator
+                
+                # Perform the refresh
+                success = refresh_devices()
+                
+                # Brief delay to show the busy state
+                import time
+                time.sleep(0.5)
+                
+                # Show error state briefly if failed
+                if not success:
+                    self._update_icon_state_internal(StatusIconState.ERROR)
+                    time.sleep(1)
+                
+                # Return to previous state
+                self._update_icon_state_internal(current_state)
             elif message['action'] == 'shutdown':
                 # Handle shutdown request
                 if self._icon:

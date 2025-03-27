@@ -21,6 +21,11 @@ class Recorder:
         """Context manager for audio stream setup and cleanup."""
         stream = None
         try:
+            # Reset error tracking at the start of each recording
+            with self.lock:
+                self.stream_error_count = 0
+                self.persistent_stream_error = False
+            
             stream = self._setup_audio_stream(input_device)
             if stream is not None:
                 try:
@@ -30,12 +35,18 @@ class Recorder:
                     yield stream
                 except sd.PortAudioError as e:
                     logger.error(f"Failed to start audio stream: {str(e)}")
+                    with self.lock:
+                        self.persistent_stream_error = True
                     yield None
             else:
                 logger.error("Failed to set up audio stream")
+                with self.lock:
+                    self.persistent_stream_error = True
                 yield None
         except Exception as e:
             logger.error(f"Error in stream setup: {str(e)}")
+            with self.lock:
+                self.persistent_stream_error = True
             yield None
         finally:
             # Always clean up the stream
@@ -73,6 +84,11 @@ class Recorder:
         self.lock = threading.Lock()  # Thread-safe state management
         self.audio_file_writer = None
         self.temp_filename = None
+        
+        # Stream error tracking
+        self.stream_error_count = 0
+        self.persistent_stream_error = False
+        self.max_stream_errors = 5  # Maximum consecutive errors before giving up
 
     def start(self, event) -> None:
         """Start recording in a new thread."""
@@ -147,10 +163,27 @@ class Recorder:
             """Capture incoming audio data while recording is active."""
             if status:
                 logger.warning(f"Stream callback status: {status}")
-                if status.input_overflow:
-                    logger.warning("Input overflow - audio data may be lost")
-                if status.input_underflow:
-                    logger.warning("Input underflow - audio device may be unavailable")
+                
+                # Track stream errors
+                if status.input_overflow or status.input_underflow:
+                    with self.lock:
+                        self.stream_error_count += 1
+                        
+                        if status.input_overflow:
+                            logger.warning(f"Input overflow - audio data may be lost (error {self.stream_error_count}/{self.max_stream_errors})")
+                        if status.input_underflow:
+                            logger.warning(f"Input underflow - audio device may be unavailable (error {self.stream_error_count}/{self.max_stream_errors})")
+                            
+                        # If we've had too many consecutive errors, mark as persistent error
+                        if self.stream_error_count >= self.max_stream_errors:
+                            logger.error(f"Persistent audio stream errors detected ({self.stream_error_count} consecutive errors)")
+                            self.persistent_stream_error = True
+                            self.recording = False  # Stop recording early
+                else:
+                    # Reset error count if this callback had no errors
+                    with self.lock:
+                        if self.stream_error_count > 0:
+                            self.stream_error_count = 0
             
             # Only write data if we're recording and the file writer exists
             with self.lock:  # Use lock to ensure thread safety when checking audio_file_writer
@@ -181,23 +214,28 @@ class Recorder:
                 if device_info["max_input_channels"] < 1:
                     logger.error(f"Device has no input channels: {device_info}")
                     return None
+            except sd.PortAudioError as e:
+                logger.error(f"Invalid audio device {input_device}: {str(e)}")
+                return None
             except Exception as e:
                 logger.error(
                     f"Failed to query device info for device {input_device}: {str(e)}"
                 )
+                return None
 
-            stream = sd.InputStream(
-                device=input_device,
-                channels=1,
-                samplerate=16000,
-                callback=callback,
-                dtype=np.float32,
-            )
-            logger.info("Audio stream created successfully")
-            return stream
-        except sd.PortAudioError as e:
-            logger.error(f"Error setting up audio stream: {str(e)}")
-            return None
+            try:
+                stream = sd.InputStream(
+                    device=input_device,
+                    channels=1,
+                    samplerate=16000,
+                    callback=callback,
+                    dtype=np.float32,
+                )
+                logger.info("Audio stream created successfully")
+                return stream
+            except sd.PortAudioError as e:
+                logger.error(f"Error setting up audio stream: {str(e)}")
+                return None
         except Exception as e:
             logger.error(f"Unexpected error setting up audio stream: {str(e)}")
             return None
@@ -285,6 +323,35 @@ class Recorder:
 
             # After the stream context exits (stream is stopped and closed)
             with self.lock:
+                # Check for persistent stream errors first
+                if self.persistent_stream_error:
+                    logger.critical("Recording failed due to persistent audio device errors")
+                    
+                    # Clean up resources
+                    if self.audio_file_writer:
+                        try:
+                            self.audio_file_writer.close()
+                        except Exception as e:
+                            logger.error(f"Error closing audio file after stream error: {str(e)}")
+                        finally:
+                            self.audio_file_writer = None
+                    
+                    if self.temp_filename and os.path.exists(self.temp_filename):
+                        try:
+                            os.unlink(self.temp_filename)
+                            logger.info(f"Deleted audio file after stream error: {self.temp_filename}")
+                        except Exception as e:
+                            logger.error(f"Error deleting temporary file: {str(e)}")
+                    
+                    # Reset error tracking
+                    self.persistent_stream_error = False
+                    self.stream_error_count = 0
+                    self.temp_filename = None
+                    
+                    # Signal error to the callback
+                    self.callback(audio_filename=None)
+                    return
+                
                 # Close the audio file writer
                 if self.audio_file_writer:
                     try:
@@ -294,6 +361,9 @@ class Recorder:
                         logger.error(f"Error closing audio file: {str(e)}")
                     finally:
                         self.audio_file_writer = None
+                
+                # Reset error tracking
+                self.stream_error_count = 0
                 
                 # Check if recording was successful (file exists and has non-zero size)
                 if self.temp_filename and os.path.exists(self.temp_filename):

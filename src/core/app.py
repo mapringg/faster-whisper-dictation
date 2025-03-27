@@ -159,6 +159,10 @@ class App:
 
         # Load sound effects with validation
         self.SOUND_EFFECTS = self._load_sound_effects()
+        
+        # Add error sound (using cancel sound as fallback)
+        if "cancel_recording" in self.SOUND_EFFECTS:
+            self.SOUND_EFFECTS["error_sound"] = self.SOUND_EFFECTS["cancel_recording"]
 
     def _on_enter_ready(self, *_):
         """Callback that runs when entering READY state."""
@@ -184,6 +188,20 @@ class App:
 
     def _on_enter_transcribing(self, event):
         """Handle entering TRANSCRIBING state."""
+        # Check if we have a valid audio file
+        audio_filename = event.kwargs.get("audio_filename") if hasattr(event, "kwargs") else None
+        
+        if audio_filename is None:
+            # Handle the case where recording failed
+            logger.error("No audio file available for transcription - recording may have failed")
+            with self.status_icon_lock:
+                self.status_icon.update_state(StatusIconState.ERROR)
+            # Wait a moment to show the error state
+            time.sleep(1)
+            # Return to READY state
+            self.m.to_READY()
+            return
+            
         # Start the actual transcription
         self._safe_start_transcription(event)
 
