@@ -68,9 +68,13 @@ if [ $INTERVAL -lt 1 ]; then
     exit 1
 fi
 
-log "Installing required packages for memory monitoring..."
+log "Checking for required monitoring packages..."
 source .venv/bin/activate
-pip install -q psutil matplotlib
+if ! python -c "import matplotlib" 2>/dev/null || ! python -c "import psutil" 2>/dev/null; then
+    log "Error: matplotlib or psutil not found."
+    log "Please install development dependencies: pip install -e .[dev]"
+    exit 1
+fi
 
 # Check if we're on macOS
 if [[ "$OSTYPE" == "darwin"* ]]; then

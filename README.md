@@ -9,7 +9,8 @@ A lightweight dictation service that uses OpenAI's API (default) or Groq's API f
 - PortAudio (required for audio input)
   - macOS: `brew install portaudio`
   - Debian/Ubuntu/Mint: `sudo apt-get install portaudio19-dev`
-- Python packages: faster-whisper, sounddevice, soundfile, pynput, transitions, requests, numpy
+- Python packages: faster-whisper, sounddevice, soundfile, pynput, transitions, requests, numpy, pystray, Pillow
+- Development packages (optional): psutil, matplotlib (install with `pip install -e .[dev]`)
 
 ## Installation
 

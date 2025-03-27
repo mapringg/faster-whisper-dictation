@@ -7,10 +7,8 @@ argparse
 transitions
 numpy
 requests
-sounddevice; sys.platform != 'win32'
+sounddevice; platform_system != 'Windows'
 soundfile
 wave
 pystray
 Pillow
-psutil
-matplotlib
