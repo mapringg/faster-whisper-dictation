@@ -23,11 +23,22 @@ setup_uinput() {
         echo 'KERNEL=="uinput", MODE="0660", GROUP="input", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/99-uinput.rules
     fi
     
-    # Add user to input group if not already in it
-    if ! groups | grep -q "\binput\b"; then
-        log "Adding user to input group..."
-        sudo usermod -a -G input $USER
-        log "NOTE: You will need to log out and log back in for the group changes to take effect"
+    # Check if /dev/uinput exists and is writable by the current user
+    USER_NEEDS_INPUT_GROUP=true
+    if [ -c "/dev/uinput" ] && [ -w "/dev/uinput" ]; then
+        log "/dev/uinput is already writable by user $USER. Skipping input group addition."
+        USER_NEEDS_INPUT_GROUP=false
+    elif [ ! -c "/dev/uinput" ]; then
+         log "Warning: /dev/uinput device not found yet. Will attempt group addition."
+    fi
+
+    # Add user to input group only if needed and not already in it
+    if [ "$USER_NEEDS_INPUT_GROUP" = true ] && ! groups $USER | grep -q "\binput\b"; then
+        log "Adding user $USER to input group for /dev/uinput access..."
+        sudo usermod -aG input $USER
+        log "$(tput setaf 1)$(tput bold)IMPORTANT: You MUST log out and log back in for these group changes to take effect fully.$(tput sgr0)"
+        # Set a flag to remind user at the end of setup
+        REMIND_LOGOUT=true
     fi
     
     # Load uinput module immediately
@@ -169,8 +180,8 @@ elif [[ -f /etc/debian_version ]] || [[ -f /etc/linuxmint/info ]]; then
     log "Service will automatically restart after login"
     
     # Remind about logging out if user was added to input group
-    if ! groups | grep -q "\binput\b"; then
-        log "IMPORTANT: You need to log out and log back in for the input group changes to take effect"
+    if [ "$REMIND_LOGOUT" = true ]; then
+        log "$(tput setaf 1)$(tput bold)REMINDER: Please log out and log back in now to apply input group permissions for dictation typing to work correctly.$(tput sgr0)"
     fi
 
 else

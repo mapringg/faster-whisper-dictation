@@ -11,6 +11,9 @@ A lightweight dictation service that uses OpenAI's API (default) or Groq's API f
   - Debian/Ubuntu/Mint: `sudo apt-get install portaudio19-dev`
 - Python packages: faster-whisper, sounddevice, soundfile, pynput, transitions, requests, numpy, pystray, Pillow
 - Development packages (optional): psutil, matplotlib (install with `pip install -e .[dev]`)
+- Linux-specific requirements:
+  - `/dev/uinput` device with proper permissions (setup.sh will configure this)
+  - User must be in the `input` group (setup.sh will add this if needed)
 
 ## Installation
 
@@ -35,6 +38,10 @@ A lightweight dictation service that uses OpenAI's API (default) or Groq's API f
    ```bash
    ./setup.sh
    ```
+
+   On Linux, if the setup adds you to the `input` group, you **must**:
+   - Log out and log back in for the group change to take effect
+   - Verify permissions with: `ls -l /dev/uinput` (should show `crw-rw---- 1 root input`)
 
 The setup script will:
 
