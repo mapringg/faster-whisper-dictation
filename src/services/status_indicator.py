@@ -1,5 +1,4 @@
 import logging
-from ..core import constants as const
 import platform
 import queue
 import threading
@@ -9,6 +8,8 @@ from enum import Enum
 
 from PIL import Image, ImageDraw
 from pystray import Icon, Menu, MenuItem
+
+from ..core import constants as const
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +178,7 @@ class StatusIcon:
             self._current_language = language_code
             self._language_callback(language_code)
             # Queue menu update
-            self.update_queue.put({'action': 'update_menu'})
+            self.update_queue.put({"action": "update_menu"})
         return False  # Don't close the menu
 
     def _select_transcriber(self, transcriber_id):
@@ -186,7 +187,7 @@ class StatusIcon:
             self._current_transcriber = transcriber_id
             self._transcriber_callback(transcriber_id)
             # Queue menu update
-            self.update_queue.put({'action': 'update_menu'})
+            self.update_queue.put({"action": "update_menu"})
         return False  # Don't close the menu
 
     def _add_transcriber_menu_items(self, menu_items: list):
@@ -256,9 +257,11 @@ class StatusIcon:
 
         sound_text = "Enable Sounds" if not self._sounds_enabled else "Disable Sounds"
         menu_items.append(MenuItem(sound_text, self._toggle_sounds))
-        
+
         # Add refresh audio devices option
-        menu_items.append(MenuItem("Refresh Audio Devices", self._refresh_audio_devices))
+        menu_items.append(
+            MenuItem("Refresh Audio Devices", self._refresh_audio_devices)
+        )
 
     def _setup_menu(self):
         """Create the right-click menu for the icon."""
@@ -276,16 +279,16 @@ class StatusIcon:
     def _refresh_audio_devices(self):
         """Refresh audio devices and update the menu."""
         # Queue a message to refresh audio devices
-        self.update_queue.put({'action': 'refresh_devices'})
+        self.update_queue.put({"action": "refresh_devices"})
         return False  # Don't close the menu
-        
+
     def _toggle_sounds(self):
         """Toggle sound effects and update the menu."""
         if self._sound_toggle_callback:
             self._sounds_enabled = not self._sounds_enabled
             self._sound_toggle_callback(self._sounds_enabled)
             # Queue menu update
-            self.update_queue.put({'action': 'update_menu'})
+            self.update_queue.put({"action": "update_menu"})
         return False  # Don't close the menu
 
     def _exit(self):
@@ -293,7 +296,7 @@ class StatusIcon:
         logger.info("Exit selected from status icon menu")
 
         # Queue a shutdown message first
-        self.update_queue.put({'action': 'shutdown'})
+        self.update_queue.put({"action": "shutdown"})
 
         # Call the exit callback
         if self.on_exit:
@@ -325,37 +328,44 @@ class StatusIcon:
 
             self._is_initialized = True
             logger.info("Status icon instance created successfully.")
-            
+
             # Set up periodic queue processing on the appropriate main thread mechanism
             if system == "Linux":
                 try:
                     # Use GLib.timeout_add if available (for GTK-based backend)
                     import gi
-                    gi.require_version('GLib', '2.0')
+
+                    gi.require_version("GLib", "2.0")
                     from gi.repository import GLib
+
                     # Process queue every 100ms
                     GLib.timeout_add(100, self._process_queue)
                     logger.info("Using GLib.timeout_add for queue processing")
                 except (ImportError, ValueError):
-                    logger.warning("GLib not available, using fallback for queue processing")
+                    logger.warning(
+                        "GLib not available, using fallback for queue processing"
+                    )
             elif system == "Darwin":
                 try:
                     # Use AppKit timer for macOS
                     import AppKit
                     import Foundation
+
                     # Create a timer to process the queue
                     self._timer = Foundation.NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
                         0.1,  # 100ms interval
                         self._icon,  # Target object
                         "processQueue:",  # Selector name
                         None,  # User info
-                        True  # Repeats
+                        True,  # Repeats
                     )
                     # Add method to icon instance dynamically (Python allows this)
                     self._icon.processQueue_ = lambda sender: self._process_queue()
                     logger.info("Using AppKit timer for queue processing")
                 except ImportError:
-                    logger.warning("AppKit not available, using fallback for queue processing")
+                    logger.warning(
+                        "AppKit not available, using fallback for queue processing"
+                    )
             else:
                 # For Windows or other platforms
                 # We'll rely on run_icon_on_main_thread implementation
@@ -383,7 +393,9 @@ class StatusIcon:
             _global_icon = None
             self._is_initialized = False
 
-    def _update_icon_state_internal(self, new_state: StatusIconState, error_msg: str | None = None):
+    def _update_icon_state_internal(
+        self, new_state: StatusIconState, error_msg: str | None = None
+    ):
         """Internal method to update icon appearance and tooltip."""
         if self._icon is None:
             logger.warning("Cannot update icon state: icon instance is None")
@@ -437,11 +449,13 @@ class StatusIcon:
             self._current_state = new_state
 
             # Queue the update instead of calling directly
-            self.update_queue.put({
-                'action': 'set_state', 
-                'state': new_state,
-                'error_msg': None  # Error messages are handled in _process_queue
-            })
+            self.update_queue.put(
+                {
+                    "action": "set_state",
+                    "state": new_state,
+                    "error_msg": None,  # Error messages are handled in _process_queue
+                }
+            )
 
     def _process_queue(self):
         """
@@ -455,36 +469,39 @@ class StatusIcon:
             except queue.Empty:
                 # No messages, just return and we'll check again later
                 return True  # Continue processing
-                
+
             # Process the message
-            if message['action'] == 'set_state':
-                self._update_icon_state_internal(message['state'])
-            elif message['action'] == 'update_menu':
+            if message["action"] == "set_state":
+                self._update_icon_state_internal(message["state"])
+            elif message["action"] == "update_menu":
                 if self._icon:
                     self._icon.menu = self._setup_menu()
-            elif message['action'] == 'refresh_devices':
+            elif message["action"] == "refresh_devices":
                 # Import here to avoid circular imports
                 from ..core.utils import refresh_devices
-                
+
                 # Refresh devices and provide feedback via icon state
                 current_state = self._current_state
-                self._update_icon_state_internal(StatusIconState.TRANSCRIBING)  # Use as "busy" indicator
-                
+                self._update_icon_state_internal(
+                    StatusIconState.TRANSCRIBING
+                )  # Use as "busy" indicator
+
                 # Perform the refresh
                 success = refresh_devices()
-                
+
                 # Brief delay to show the busy state
                 import time
+
                 time.sleep(0.5)
-                
+
                 # Show error state briefly if failed
                 if not success:
                     self._update_icon_state_internal(StatusIconState.ERROR)
                     time.sleep(1)
-                
+
                 # Return to previous state
                 self._update_icon_state_internal(current_state)
-            elif message['action'] == 'shutdown':
+            elif message["action"] == "shutdown":
                 # Handle shutdown request
                 logger.info("Processing shutdown request from queue")
                 if self._icon:
@@ -493,15 +510,15 @@ class StatusIcon:
                     except Exception as e:
                         logger.error(f"Error stopping icon: {e}")
                 return False  # Stop processing
-                
+
             # Mark task as done
             self.update_queue.task_done()
-            
+
         except Exception as e:
             logger.error(f"Error processing icon queue: {e}")
-            
+
         return True  # Continue processing
-            
+
     def stop(self):
         """Clean up resources when stopping the status icon."""
         logger.info("Stopping status icon")
@@ -618,23 +635,22 @@ class StatusIcon:
             self._icon.menu = self._setup_menu()
 
 
-
 def run_icon_on_main_thread(icon_instance):
     """
     Run the icon loop on the main thread.
     This should be called from the main thread after the app is set up.
     It will block until the icon is stopped or exits.
-    
+
     Args:
         icon_instance: The pystray.Icon instance to run
     """
     if icon_instance:
         try:
             logger.info("Running status icon loop on main thread...")
-            
+
             # Create and start a thread to process queue while icon is running
             should_continue = [True]  # Use a list for mutable reference
-            
+
             def process_queue_wrapper():
                 while should_continue[0]:
                     if icon_instance and hasattr(icon_instance, "_process_queue"):
@@ -642,17 +658,17 @@ def run_icon_on_main_thread(icon_instance):
                             should_continue[0] = False
                             break
                     time.sleep(0.1)  # 100ms interval
-            
+
             queue_thread = threading.Thread(target=process_queue_wrapper, daemon=True)
             queue_thread.start()
-            
+
             # This call blocks until the icon is stopped
             icon_instance.run()
-            
+
             # Signal queue processing thread to stop
             should_continue[0] = False
             queue_thread.join(timeout=1.0)
-            
+
             logger.info("Status icon main thread loop exited.")
         except Exception as e:
             logger.error(f"Error running icon on main thread: {e}")

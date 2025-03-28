@@ -1,5 +1,4 @@
 import logging
-from ..core import constants as const
 import threading
 import time
 from collections.abc import Callable
@@ -7,6 +6,7 @@ from typing import Any, TypeVar
 
 from pynput import keyboard
 
+from ..core import constants as const
 from .keyboard_controller_factory import create_keyboard_controller
 
 logger = logging.getLogger(__name__)
@@ -21,9 +21,13 @@ class KeyboardReplayer:
     """Handles typing out transcribed text with rate limiting and error handling."""
 
     # Class constants from core.constants
-    DEFAULT_TYPING_DELAY = const.DEFAULT_TYPING_DELAY_SECS  # Delay between keystrokes in seconds
+    DEFAULT_TYPING_DELAY = (
+        const.DEFAULT_TYPING_DELAY_SECS
+    )  # Delay between keystrokes in seconds
     DEFAULT_MAX_RETRIES = const.DEFAULT_MAX_TYPING_RETRIES
-    DEFAULT_RETRY_DELAY = const.DEFAULT_RETRY_DELAY_SECS  # Base delay for retries in seconds
+    DEFAULT_RETRY_DELAY = (
+        const.DEFAULT_RETRY_DELAY_SECS
+    )  # Base delay for retries in seconds
 
     def __init__(
         self,
@@ -196,14 +200,16 @@ class KeyListener:
             with self.lock:
                 self.listener = keyboard.GlobalHotKeys({self.key: self._safe_callback})
                 self.listener.start()
-                
+
                 # Instead of blocking indefinitely, check periodically if we should shut down
                 while self.listener.running:
                     # Check if shutdown_event exists and is set
-                    if hasattr(self, 'shutdown_event') and self.shutdown_event.is_set():
-                        logger.info("Shutdown event detected in key listener, stopping...")
+                    if hasattr(self, "shutdown_event") and self.shutdown_event.is_set():
+                        logger.info(
+                            "Shutdown event detected in key listener, stopping..."
+                        )
                         break
-                    
+
                     # Sleep briefly to avoid high CPU usage
                     time.sleep(0.1)
         except Exception as e:
@@ -233,8 +239,12 @@ class DoubleKeyListener:
     """Handles double-click key events with rate limiting and error handling."""
 
     # Class constants from core.constants
-    DEFAULT_DOUBLE_CLICK_THRESHOLD = const.DEFAULT_DOUBLE_CLICK_THRESHOLD_SECS  # Seconds between clicks
-    DEFAULT_MIN_PRESS_DURATION = const.DEFAULT_MIN_PRESS_DURATION_SECS  # Minimum press duration in seconds
+    DEFAULT_DOUBLE_CLICK_THRESHOLD = (
+        const.DEFAULT_DOUBLE_CLICK_THRESHOLD_SECS
+    )  # Seconds between clicks
+    DEFAULT_MIN_PRESS_DURATION = (
+        const.DEFAULT_MIN_PRESS_DURATION_SECS
+    )  # Minimum press duration in seconds
 
     def __init__(
         self,
@@ -324,14 +334,16 @@ class DoubleKeyListener:
                     on_press=self.on_press, on_release=self.on_release
                 )
                 self.listener.start()
-                
+
                 # Instead of blocking indefinitely, check periodically if we should shut down
                 while self.listener.is_alive():
                     # Check if shutdown_event exists and is set
-                    if hasattr(self, 'shutdown_event') and self.shutdown_event.is_set():
-                        logger.info("Shutdown event detected in double key listener, stopping...")
+                    if hasattr(self, "shutdown_event") and self.shutdown_event.is_set():
+                        logger.info(
+                            "Shutdown event detected in double key listener, stopping..."
+                        )
                         break
-                    
+
                     # Sleep briefly to avoid high CPU usage
                     time.sleep(0.1)
         except Exception as e:

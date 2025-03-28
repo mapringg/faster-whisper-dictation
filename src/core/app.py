@@ -1,5 +1,4 @@
 import logging
-from . import constants as const
 import platform
 import signal
 import threading
@@ -17,6 +16,7 @@ from ..services.status_indicator import (
     run_icon_on_main_thread,
 )
 from ..services.transcriber import GroqTranscriber, OpenAITranscriber
+from . import constants as const
 from .state_machine import create_state_machine
 
 logger = logging.getLogger(__name__)
@@ -143,8 +143,8 @@ class App:
     def _on_enter_replaying(self, event):
         """Handle entering REPLAYING state."""
         # Check for transcription error
-        error = event.kwargs.get('error') if hasattr(event, 'kwargs') else None
-        
+        error = event.kwargs.get("error") if hasattr(event, "kwargs") else None
+
         if error:
             logger.error(f"Transcription failed: {error}")
             with self.status_icon_lock:

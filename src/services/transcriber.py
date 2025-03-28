@@ -1,6 +1,5 @@
 import json
 import logging
-from ..core import constants as const
 import os
 import time
 from abc import ABC, abstractmethod
@@ -12,6 +11,7 @@ import numpy as np
 import requests
 import soundfile as sf
 
+from ..core import constants as const
 from ..core.utils import load_env_from_file
 
 logger = logging.getLogger(__name__)
@@ -156,7 +156,9 @@ class BaseTranscriber(ABC):
                 result = None
             else:
                 logger.error("Failed to get transcription after retries")
-                self.callback(segments=[], error=result_or_error if not success else None)
+                self.callback(
+                    segments=[], error=result_or_error if not success else None
+                )
 
         except Exception as e:
             logger.error(f"Error during transcription: {str(e)}")
@@ -313,11 +315,15 @@ class GroqTranscriber(BaseTranscriber):
 
                         # Handle specific error cases
                         if response.status_code == 401:
-                            error_msg = "Invalid API key - please check your GROQ_API_KEY"
+                            error_msg = (
+                                "Invalid API key - please check your GROQ_API_KEY"
+                            )
                             logger.error(error_msg)
                             return (False, error_msg)
                         elif response.status_code == 413:
-                            error_msg = "Audio file too large - try recording a shorter segment"
+                            error_msg = (
+                                "Audio file too large - try recording a shorter segment"
+                            )
                             logger.error(error_msg)
                             return (False, error_msg)
 
@@ -479,7 +485,9 @@ class OpenAITranscriber(BaseTranscriber):
 
                         # Handle specific error cases
                         if response.status_code == 401:
-                            error_msg = "Invalid API key - please check your OPENAI_API_KEY"
+                            error_msg = (
+                                "Invalid API key - please check your OPENAI_API_KEY"
+                            )
                             logger.error(error_msg)
                             return (False, error_msg)
                         elif response.status_code == 413:
