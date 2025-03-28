@@ -3,7 +3,6 @@ import platform
 import signal
 import threading
 import time
-from abc import ABC, abstractmethod
 
 import numpy as np
 from pynput import keyboard
@@ -20,8 +19,6 @@ from ..services.transcriber import GroqTranscriber, OpenAITranscriber
 from .state_machine import create_state_machine
 
 logger = logging.getLogger(__name__)
-
-
 
 
 class App:
@@ -50,8 +47,8 @@ class App:
         if platform.system() == "Darwin":
             self.cancel_key = keyboard.Key.alt_r  # Right Option
             self.cancel_key_name = "right option"
-        else: # Linux, Windows (assuming Left Ctrl)
-            self.cancel_key = keyboard.Key.ctrl_l # Left Control
+        else:  # Linux, Windows (assuming Left Ctrl)
+            self.cancel_key = keyboard.Key.ctrl_l  # Left Control
             self.cancel_key_name = "left control"
 
         # Start timer monitoring thread
@@ -96,7 +93,7 @@ class App:
 
         # Load sound effects with validation
         self.SOUND_EFFECTS = self._load_sound_effects()
-        
+
         # Add error sound (using cancel sound as fallback)
         if "cancel_recording" in self.SOUND_EFFECTS:
             self.SOUND_EFFECTS["error_sound"] = self.SOUND_EFFECTS["cancel_recording"]
@@ -122,11 +119,15 @@ class App:
     def _on_enter_transcribing(self, event):
         """Handle entering TRANSCRIBING state."""
         # Check if we have a valid audio file
-        audio_filename = event.kwargs.get("audio_filename") if hasattr(event, "kwargs") else None
-        
+        audio_filename = (
+            event.kwargs.get("audio_filename") if hasattr(event, "kwargs") else None
+        )
+
         if audio_filename is None:
             # Handle the case where recording failed
-            logger.error("No audio file available for transcription - recording may have failed")
+            logger.error(
+                "No audio file available for transcription - recording may have failed"
+            )
             with self.status_icon_lock:
                 self.status_icon.update_state(StatusIconState.ERROR)
             # Wait a moment to show the error state
@@ -134,7 +135,7 @@ class App:
             # Return to READY state
             self.m.to_READY()
             return
-            
+
         # Start the actual transcription
         self._safe_start_transcription(event)
 
@@ -191,7 +192,7 @@ class App:
                 # Update the stored model name
                 self.args.model_name = model_name
                 self.args.transcriber = transcriber_id
-            
+
             logger.info(
                 f"Transcriber changed to: {transcriber_id} with model: {model_name}"
             )
@@ -379,6 +380,8 @@ class App:
         Returns:
             bool: True if recording was cancelled, False otherwise
         """
+        logger.debug("Cancel recording requested")
+
         if not self._can_change_state():
             logger.warning("State change too fast - ignoring cancel request")
             return False
@@ -522,8 +525,8 @@ class App:
         """Main application entry point."""
         # Register signal handlers
         signal.signal(signal.SIGINT, self.signal_handler)  # Handle Ctrl+C
-        signal.signal(signal.SIGTERM, self.signal_handler) # Handle kill/systemd stop
-        
+        signal.signal(signal.SIGTERM, self.signal_handler)  # Handle kill/systemd stop
+
         try:
             # Create the status icon instance (doesn't run the loop yet)
             logger.info("Creating status icon instance...")
@@ -539,6 +542,10 @@ class App:
             logger.info("Setting initial state to READY...")
             self.m.to_READY()  # Ensure initial state and message
 
+            # Pass shutdown event to listeners
+            keylistener.shutdown_event = self.shutdown_event
+            cancel_listener.shutdown_event = self.shutdown_event
+
             # Start key listeners in separate threads
             key_listener_thread = threading.Thread(target=keylistener.run, daemon=True)
             cancel_listener_thread = threading.Thread(
@@ -553,11 +560,11 @@ class App:
             run_icon_on_main_thread(self.status_icon._icon)
 
             logger.info("Status icon loop finished. Shutting down...")
-            
+
         except Exception as e:
             logger.error(f"Critical application error: {str(e)}", exc_info=True)
             self.shutdown_event.set()
-            
+
         finally:
             logger.info("Entering final cleanup phase.")
             self._cleanup_resources()

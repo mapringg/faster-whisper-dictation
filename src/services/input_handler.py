@@ -186,7 +186,7 @@ class KeyListener:
             return False
 
     def run(self) -> None:
-        """Start listening for key presses with error handling."""
+        """Start listening for key presses with error handling and shutdown support."""
         if not self._validate_key():
             logger.error("Cannot start key listener with invalid key")
             return
@@ -195,7 +195,16 @@ class KeyListener:
             with self.lock:
                 self.listener = keyboard.GlobalHotKeys({self.key: self._safe_callback})
                 self.listener.start()
-                self.listener.join()
+                
+                # Instead of blocking indefinitely, check periodically if we should shut down
+                while self.listener.running:
+                    # Check if shutdown_event exists and is set
+                    if hasattr(self, 'shutdown_event') and self.shutdown_event.is_set():
+                        logger.info("Shutdown event detected in key listener, stopping...")
+                        break
+                    
+                    # Sleep briefly to avoid high CPU usage
+                    time.sleep(0.1)
         except Exception as e:
             logger.error(f"Error in key listener: {str(e)}")
         finally:
@@ -307,14 +316,23 @@ class DoubleKeyListener:
         pass
 
     def run(self) -> None:
-        """Start listening for key events with error handling."""
+        """Start listening for key events with error handling and shutdown support."""
         try:
             with self.lock:
                 self.listener = keyboard.Listener(
                     on_press=self.on_press, on_release=self.on_release
                 )
                 self.listener.start()
-                self.listener.join()
+                
+                # Instead of blocking indefinitely, check periodically if we should shut down
+                while self.listener.is_alive():
+                    # Check if shutdown_event exists and is set
+                    if hasattr(self, 'shutdown_event') and self.shutdown_event.is_set():
+                        logger.info("Shutdown event detected in double key listener, stopping...")
+                        break
+                    
+                    # Sleep briefly to avoid high CPU usage
+                    time.sleep(0.1)
         except Exception as e:
             logger.error(f"Error in double key listener: {str(e)}")
         finally:
