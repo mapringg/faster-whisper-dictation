@@ -100,7 +100,7 @@ class BaseTranscriber(ABC):
     @abstractmethod
     def make_api_request(
         self, temp_filename: str, language: str | None = None
-    ) -> dict | None:
+    ) -> tuple[bool, dict | str]:
         """
         Make API request with retry mechanism.
 
@@ -109,8 +109,9 @@ class BaseTranscriber(ABC):
             language: Optional language code for transcription
 
         Returns:
-            dict: JSON response from API if successful
-            None: If all retries failed
+            tuple: (success: bool, result_or_error: dict|str)
+                   On success: (True, response.json())
+                   On failure: (False, error_message)
         """
         pass
 
@@ -140,10 +141,10 @@ class BaseTranscriber(ABC):
 
         try:
             # Make API request and handle response
-            result = self.make_api_request(audio_filename, language)
+            success, result_or_error = self.make_api_request(audio_filename, language)
 
-            if result:
-                text = result.get("text", "")
+            if success:
+                text = result_or_error.get("text", "")
                 if not text:
                     logger.warning("Received empty transcription")
 
@@ -155,7 +156,7 @@ class BaseTranscriber(ABC):
                 result = None
             else:
                 logger.error("Failed to get transcription after retries")
-                self.callback(segments=[])
+                self.callback(segments=[], error=result_or_error if not success else None)
 
         except Exception as e:
             logger.error(f"Error during transcription: {str(e)}")
@@ -231,7 +232,7 @@ class GroqTranscriber(BaseTranscriber):
 
     def make_api_request(
         self, temp_filename: str, language: str | None = None
-    ) -> dict | None:
+    ) -> tuple[bool, dict | str]:
         """
         Make API request to Groq with retry mechanism.
 
@@ -277,7 +278,7 @@ class GroqTranscriber(BaseTranscriber):
                             result = response.json()
                             # Close the response to release resources
                             response.close()
-                            return result
+                            return (True, result)
                         except json.JSONDecodeError as e:
                             logger.error(f"Failed to decode JSON response: {str(e)}")
                             # Close the response to release resources
@@ -312,15 +313,13 @@ class GroqTranscriber(BaseTranscriber):
 
                         # Handle specific error cases
                         if response.status_code == 401:
-                            logger.error(
-                                "Invalid API key - please check your GROQ_API_KEY"
-                            )
-                            break
+                            error_msg = "Invalid API key - please check your GROQ_API_KEY"
+                            logger.error(error_msg)
+                            return (False, error_msg)
                         elif response.status_code == 413:
-                            logger.error(
-                                "Audio file too large - try recording a shorter segment"
-                            )
-                            break
+                            error_msg = "Audio file too large - try recording a shorter segment"
+                            logger.error(error_msg)
+                            return (False, error_msg)
 
                         # Exponential backoff for retries
                         if attempt < self.MAX_RETRIES - 1:
@@ -348,7 +347,7 @@ class GroqTranscriber(BaseTranscriber):
 
                 gc.collect()
 
-        return None
+        return (False, "Max retries exceeded for server/network error")
 
 
 class OpenAITranscriber(BaseTranscriber):
@@ -399,7 +398,7 @@ class OpenAITranscriber(BaseTranscriber):
 
     def make_api_request(
         self, temp_filename: str, language: str | None = None
-    ) -> dict | None:
+    ) -> tuple[bool, dict | str]:
         """
         Make API request to OpenAI with retry mechanism.
 
@@ -445,7 +444,7 @@ class OpenAITranscriber(BaseTranscriber):
                             result = response.json()
                             # Close the response to release resources
                             response.close()
-                            return result
+                            return (True, result)
                         except json.JSONDecodeError as e:
                             logger.error(f"Failed to decode JSON response: {str(e)}")
                             # Close the response to release resources
@@ -480,15 +479,13 @@ class OpenAITranscriber(BaseTranscriber):
 
                         # Handle specific error cases
                         if response.status_code == 401:
-                            logger.error(
-                                "Invalid API key - please check your OPENAI_API_KEY"
-                            )
-                            break
+                            error_msg = "Invalid API key - please check your OPENAI_API_KEY"
+                            logger.error(error_msg)
+                            return (False, error_msg)
                         elif response.status_code == 413:
-                            logger.error(
-                                "Audio file too large - must be less than 25MB"
-                            )
-                            break
+                            error_msg = "Audio file too large - must be less than 25MB"
+                            logger.error(error_msg)
+                            return (False, error_msg)
 
                         # Exponential backoff for retries
                         if attempt < self.MAX_RETRIES - 1:
@@ -516,4 +513,4 @@ class OpenAITranscriber(BaseTranscriber):
 
                 gc.collect()
 
-        return None
+        return (False, "Max retries exceeded for server/network error")

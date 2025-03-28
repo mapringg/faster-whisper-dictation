@@ -383,7 +383,7 @@ class StatusIcon:
             _global_icon = None
             self._is_initialized = False
 
-    def _update_icon_state_internal(self, new_state: StatusIconState):
+    def _update_icon_state_internal(self, new_state: StatusIconState, error_msg: str | None = None):
         """Internal method to update icon appearance and tooltip."""
         if self._icon is None:
             logger.warning("Cannot update icon state: icon instance is None")
@@ -398,6 +398,8 @@ class StatusIcon:
 
             # Update tooltip/title
             description = self._state_descriptions.get(new_state, "Unknown state")
+            if new_state == StatusIconState.ERROR and error_msg:
+                description = f"Error: {error_msg}"
             # pystray uses 'title' for the tooltip text
             self._icon.title = f"Dictation: {description}"
 
@@ -435,7 +437,11 @@ class StatusIcon:
             self._current_state = new_state
 
             # Queue the update instead of calling directly
-            self.update_queue.put({'action': 'set_state', 'state': new_state})
+            self.update_queue.put({
+                'action': 'set_state', 
+                'state': new_state,
+                'error_msg': None  # Error messages are handled in _process_queue
+            })
 
     def _process_queue(self):
         """

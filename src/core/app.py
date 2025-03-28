@@ -142,8 +142,20 @@ class App:
 
     def _on_enter_replaying(self, event):
         """Handle entering REPLAYING state."""
-        # Start the actual replaying
-        self._safe_start_replay(event)
+        # Check for transcription error
+        error = event.kwargs.get('error') if hasattr(event, 'kwargs') else None
+        
+        if error:
+            logger.error(f"Transcription failed: {error}")
+            with self.status_icon_lock:
+                self.status_icon.update_state(StatusIconState.ERROR)
+            # Wait a moment to show the error state
+            time.sleep(1)
+            # Return to READY state
+            self.m.to_READY()
+        else:
+            # Start the actual replaying
+            self._safe_start_replay(event)
 
     def signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully."""
