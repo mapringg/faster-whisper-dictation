@@ -1,5 +1,6 @@
 import json
 import logging
+from ..core import constants as const
 import os
 import time
 from abc import ABC, abstractmethod
@@ -34,10 +35,10 @@ class Segment:
 class BaseTranscriber(ABC):
     """Base class for audio transcription services."""
 
-    # Common configuration as class constants
-    MAX_RETRIES = 3
-    INITIAL_RETRY_DELAY = 1  # seconds
-    REQUEST_TIMEOUT = 30  # seconds
+    # Common configuration from constants
+    MAX_RETRIES = const.API_MAX_RETRIES
+    INITIAL_RETRY_DELAY = const.API_INITIAL_RETRY_DELAY_SECS  # seconds
+    REQUEST_TIMEOUT = const.API_REQUEST_TIMEOUT_SECS  # seconds
 
     def __init__(self, callback: Callable, api_key_env_var: str, model: str):
         """
@@ -189,7 +190,7 @@ class GroqTranscriber(BaseTranscriber):
     """Handles audio transcription using the Groq API."""
 
     # Groq-specific configuration
-    API_ENDPOINT = "https://api.groq.com/openai/v1/audio/transcriptions"
+    API_ENDPOINT = const.GROQ_API_ENDPOINT
 
     def __init__(self, callback: Callable, model: str = "whisper-large-v3"):
         """
@@ -354,7 +355,7 @@ class OpenAITranscriber(BaseTranscriber):
     """Handles audio transcription using the OpenAI API."""
 
     # OpenAI-specific configuration
-    API_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions"
+    API_ENDPOINT = const.OPENAI_API_ENDPOINT
 
     def __init__(self, callback: Callable, model: str = "gpt-4o-transcribe"):
         """

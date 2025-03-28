@@ -1,4 +1,5 @@
 import logging
+from . import constants as const
 import platform
 import signal
 import threading
@@ -208,11 +209,9 @@ class App:
             dict: Mapping of sound effect names to audio data
         """
         sounds = {
-            "start_recording": loadwav("assets/107786__leviclaassen__beepbeep.wav"),
-            "finish_recording": loadwav(
-                "assets/559318__alejo902__sonido-3-regulator.wav"
-            ),
-            "cancel_recording": loadwav("assets/160909__racche__scratch-speed.wav"),
+            "start_recording": loadwav(const.SOUND_PATH_START),
+            "finish_recording": loadwav(const.SOUND_PATH_FINISH),
+            "cancel_recording": loadwav(const.SOUND_PATH_CANCEL),
         }
 
         # Validate sound effects

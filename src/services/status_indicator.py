@@ -1,4 +1,5 @@
 import logging
+from ..core import constants as const
 import platform
 import queue
 import threading
@@ -25,10 +26,10 @@ class StatusIconState(Enum):
 class StatusIcon:
     """System tray icon that reflects the application state."""
 
-    # Class constants
-    ICON_WIDTH = 22
-    ICON_HEIGHT = 22
-    ICON_PADDING = 4
+    # Class constants - now imported from core.constants
+    ICON_WIDTH = const.ICON_WIDTH_PX
+    ICON_HEIGHT = const.ICON_HEIGHT_PX
+    ICON_PADDING = const.ICON_PADDING_PX
 
     def __init__(self, on_exit: Callable | None = None):
         """
@@ -63,11 +64,11 @@ class StatusIcon:
 
         # State descriptions for tooltips and menus
         self._state_descriptions = {
-            StatusIconState.READY: "Ready - Double tap to start recording",
-            StatusIconState.RECORDING: "Recording... - Tap once to stop",
-            StatusIconState.TRANSCRIBING: "Transcribing... please wait",
-            StatusIconState.REPLAYING: "Replaying text...",
-            StatusIconState.ERROR: "Error occurred",
+            StatusIconState.READY: const.STATE_DESC_READY,
+            StatusIconState.RECORDING: const.STATE_DESC_RECORDING,
+            StatusIconState.TRANSCRIBING: const.STATE_DESC_TRANSCRIBING,
+            StatusIconState.REPLAYING: const.STATE_DESC_REPLAYING,
+            StatusIconState.ERROR: const.STATE_DESC_ERROR,
         }
 
         # Available languages with labels

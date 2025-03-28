@@ -1,4 +1,5 @@
 import logging
+from ..core import constants as const
 import threading
 import time
 from collections.abc import Callable
@@ -19,10 +20,10 @@ Event = Any  # Type for state machine event
 class KeyboardReplayer:
     """Handles typing out transcribed text with rate limiting and error handling."""
 
-    # Class constants
-    DEFAULT_TYPING_DELAY = 0.0025  # Delay between keystrokes in seconds
-    DEFAULT_MAX_RETRIES = 3
-    DEFAULT_RETRY_DELAY = 0.1  # Base delay for retries in seconds
+    # Class constants from core.constants
+    DEFAULT_TYPING_DELAY = const.DEFAULT_TYPING_DELAY_SECS  # Delay between keystrokes in seconds
+    DEFAULT_MAX_RETRIES = const.DEFAULT_MAX_TYPING_RETRIES
+    DEFAULT_RETRY_DELAY = const.DEFAULT_RETRY_DELAY_SECS  # Base delay for retries in seconds
 
     def __init__(
         self,
@@ -231,9 +232,9 @@ class KeyListener:
 class DoubleKeyListener:
     """Handles double-click key events with rate limiting and error handling."""
 
-    # Class constants
-    DEFAULT_DOUBLE_CLICK_THRESHOLD = 0.5  # Seconds between clicks
-    DEFAULT_MIN_PRESS_DURATION = 0.1  # Minimum press duration in seconds
+    # Class constants from core.constants
+    DEFAULT_DOUBLE_CLICK_THRESHOLD = const.DEFAULT_DOUBLE_CLICK_THRESHOLD_SECS  # Seconds between clicks
+    DEFAULT_MIN_PRESS_DURATION = const.DEFAULT_MIN_PRESS_DURATION_SECS  # Minimum press duration in seconds
 
     def __init__(
         self,
