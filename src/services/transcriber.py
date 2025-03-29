@@ -7,9 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import requests
-import soundfile as sf
 
 from ..core import constants as const
 from ..core.utils import load_env_from_file
@@ -84,20 +82,6 @@ class BaseTranscriber(ABC):
             return "Transcribe this audio, which may contain technical discussions related to software development, programming languages, APIs, and system architecture. Use precise terminology where appropriate."
 
     @abstractmethod
-    def save_audio(self, audio_data: np.ndarray, filename: str) -> bool:
-        """
-        Save audio data to a file.
-
-        Args:
-            audio_data: Numpy array containing audio samples
-            filename: Path to save the audio file
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        pass
-
-    @abstractmethod
     def make_api_request(
         self, temp_filename: str, language: str | None = None
     ) -> tuple[bool, dict | str]:
@@ -152,8 +136,6 @@ class BaseTranscriber(ABC):
 
                 segments = [Segment(text)]
                 self.callback(segments=segments)
-                # Clear result data after use
-                result = None
             else:
                 logger.error("Failed to get transcription after retries")
                 self.callback(
@@ -178,16 +160,6 @@ class BaseTranscriber(ABC):
 
             gc.collect()
 
-    @abstractmethod
-    def get_file_extension(self) -> str:
-        """
-        Get the file extension for the audio format used by this transcriber.
-
-        Returns:
-            str: File extension including the dot (e.g., ".mp3")
-        """
-        pass
-
 
 class GroqTranscriber(BaseTranscriber):
     """Handles audio transcription using the Groq API."""
@@ -204,33 +176,6 @@ class GroqTranscriber(BaseTranscriber):
             model: Name of the Groq model to use (default: whisper-large-v3)
         """
         super().__init__(callback, "GROQ_API_KEY", model)
-
-    def get_file_extension(self) -> str:
-        """
-        Get the file extension for Groq audio format.
-
-        Returns:
-            str: File extension
-        """
-        return ".flac"
-
-    def save_audio(self, audio_data: np.ndarray, filename: str) -> bool:
-        """
-        Save audio data to a FLAC file (lossless compression, smaller than WAV).
-
-        Args:
-            audio_data: Numpy array containing audio samples
-            filename: Path to save the FLAC file
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            sf.write(filename, audio_data, 16000, format="FLAC", subtype="PCM_16")
-            return True
-        except Exception as e:
-            logger.error(f"Error saving audio to FLAC: {str(e)}")
-            return False
 
     def make_api_request(
         self, temp_filename: str, language: str | None = None
@@ -371,36 +316,6 @@ class OpenAITranscriber(BaseTranscriber):
             model: Name of the OpenAI model to use (default: gpt-4o-transcribe)
         """
         super().__init__(callback, "OPENAI_API_KEY", model)
-
-    def get_file_extension(self) -> str:
-        """
-        Get the file extension for OpenAI audio format.
-
-        Returns:
-            str: File extension
-        """
-        return ".wav"
-
-    def save_audio(self, audio_data: np.ndarray, filename: str) -> bool:
-        """
-        Save audio data directly to a WAV file.
-        OpenAI supports WAV format for transcriptions.
-
-        Args:
-            audio_data: Numpy array containing audio samples
-            filename: Path to save the WAV file
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            # Save directly as WAV file at 16kHz
-            sf.write(filename, audio_data, 16000, format="WAV", subtype="PCM_16")
-            logger.info(f"Successfully saved audio as WAV to {filename}")
-            return True
-        except Exception as e:
-            logger.error(f"Error saving audio as WAV: {str(e)}")
-            return False
 
     def make_api_request(
         self, temp_filename: str, language: str | None = None
