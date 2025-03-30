@@ -77,9 +77,9 @@ class BaseTranscriber(ABC):
             str: Prompt text
         """
         if language == "th":
-            return "ถอดข้อความเสียงนี้ซึ่งอาจมีการสนทนาทั่วไปเกี่ยวกับชีวิตประจำวัน บทสนทนา หรือเนื้อหาทั่วไป ใช้คำศัพท์ที่เหมาะสม"
+            return "ถอดข้อความเสียงนี้ให้ถูกต้อง ใส่เครื่องหมายวรรคตอนให้เหมาะสม เช่น จุด และคอมม่า"
         else:  # Default to English software development focus
-            return "Transcribe this audio, which may contain technical discussions related to software development, programming languages, APIs, and system architecture. Use precise terminology where appropriate."
+            return "Transcribe this audio accurately. It likely contains technical software development discussion, including terms like Typescript, JavaScript, React, Next.js, React Native, Expo, Supabase, PostgreSQL, MongoDB, Tailwind CSS, Shadcn, and system design. Prioritize correct spelling of technical terms, acronyms, and proper nouns. Maintain standard punctuation and capitalization."
 
     @abstractmethod
     def make_api_request(
