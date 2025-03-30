@@ -1,4 +1,6 @@
 import logging
+import platform  # Added for OS detection
+import subprocess  # Added for pbcopy
 import threading
 import time
 from collections.abc import Callable
@@ -123,40 +125,97 @@ class KeyboardReplayer:
             return
 
         try:
-            # Use context manager for lock
-            with self.lock:
-                # Process each segment
+            if platform.system() == "Darwin":  # macOS specific logic
+                logger.info("macOS detected, using pbcopy for clipboard output.")
+                full_text = ""
+                is_first_char_overall = True
                 for segment in segments:
-                    is_first = True
-
-                    # Process each character in segment
                     for char in segment.text:
-                        # Skip leading space in first segment
-                        if is_first and char == " ":
-                            is_first = False
+                        # Skip leading space only for the very first character overall
+                        if is_first_char_overall and char == " ":
+                            is_first_char_overall = False
                             continue
+                        is_first_char_overall = False  # Mark after first non-space char
+                        full_text += char
 
-                        # Set is_first to False after processing the first character
-                        is_first = False
+                if full_text:
+                    try:
+                        # Use subprocess to pipe text to pbcopy
+                        subprocess.run(
+                            ["pbcopy"],
+                            input=full_text,
+                            text=True,
+                            check=True,
+                            capture_output=True,  # Suppress pbcopy output
+                        )
+                        logger.info(
+                            f"Successfully copied {len(full_text)} characters to clipboard."
+                        )
+                        # Add a small delay before pasting
+                        time.sleep(0.1)
 
-                        # Type character with retry mechanism
-                        if self._type_with_retry(char):
-                            text_buffer.append(char)
-                            time.sleep(self.typing_delay)
-                        else:
-                            logger.warning(
-                                f"Skipping character '{char}' due to repeated errors"
-                            )
+                        # Simulate Command + V paste shortcut
+                        try:
+                            logger.info("Attempting to paste from clipboard...")
+                            with self.kb.pressed(keyboard.Key.cmd):
+                                self.kb.press("v")
+                                self.kb.release("v")
+                            logger.info("Paste command executed.")
+                        except Exception as paste_err:
+                            logger.error(f"Error simulating paste: {paste_err}")
 
-                # Log final typed text
-                if text_buffer:
-                    logger.info(f"Successfully typed text: {''.join(text_buffer)}")
+                    except subprocess.CalledProcessError as e:
+                        logger.error(
+                            f"Failed to copy text to clipboard using pbcopy: {e}"
+                        )
+                        logger.error(f"pbcopy stderr: {e.stderr}")
+                    except FileNotFoundError:
+                        logger.error(
+                            "pbcopy command not found. Is it installed and in PATH?"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"An unexpected error occurred while using pbcopy: {e}"
+                        )
                 else:
-                    logger.warning("No text was typed")
+                    logger.warning("No text generated to copy to clipboard.")
+
+            else:  # Original logic for non-macOS systems
+                # Use context manager for lock
+                with self.lock:
+                    # Process each segment
+                    for segment in segments:
+                        is_first = True
+
+                        # Process each character in segment
+                        for char in segment.text:
+                            # Skip leading space in first segment
+                            if is_first and char == " ":
+                                is_first = False
+                                continue
+
+                            # Set is_first to False after processing the first character
+                            is_first = False
+
+                            # Type character with retry mechanism
+                            if self._type_with_retry(char):
+                                text_buffer.append(char)
+                                time.sleep(self.typing_delay)
+                            else:
+                                logger.warning(
+                                    f"Skipping character '{char}' due to repeated errors"
+                                )
+
+                    # Log final typed text
+                    if text_buffer:
+                        logger.info(f"Successfully typed text: {''.join(text_buffer)}")
+                    else:
+                        logger.warning("No text was typed")
 
         except Exception as e:
             logger.error(f"Unexpected error during text replay: {str(e)}")
         finally:
+            # This callback needs to be called regardless of the method (typing/copying)
             self.callback()
 
 
