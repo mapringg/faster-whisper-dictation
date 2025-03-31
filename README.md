@@ -9,11 +9,12 @@ A lightweight dictation service that uses OpenAI's API (default) or Groq's API f
 - PortAudio (required for audio input)
   - macOS: `brew install portaudio`
   - Debian/Ubuntu/Mint: `sudo apt-get install portaudio19-dev`
-- Python packages: faster-whisper, sounddevice, soundfile, pynput, transitions, requests, numpy, pystray, Pillow
+- Python packages: sounddevice, soundfile, pynput, transitions, requests, numpy, pystray, Pillow, uinput (Linux only)
 - Development packages (optional): psutil, matplotlib (install with `pip install -e .[dev]`)
 - Linux-specific requirements:
-  - `/dev/uinput` device with proper permissions (setup.sh will configure this)
-  - User must be in the `input` group (setup.sh will add this if needed)
+  - `xsel`: Required for clipboard functionality. Install via package manager (e.g., `sudo apt install xsel`). The setup script will warn if it's missing.
+  - `/dev/uinput` device with proper permissions (setup.sh will configure this).
+  - User must be in the `input` group (setup.sh will add this if needed).
 
 ## Installation
 
@@ -35,11 +36,13 @@ A lightweight dictation service that uses OpenAI's API (default) or Groq's API f
    ```
 
 3. Run the setup script:
+
    ```bash
    ./setup.sh
    ```
 
    On Linux, if the setup adds you to the `input` group, you **must**:
+
    - Log out and log back in for the group change to take effect
    - Verify permissions with: `ls -l /dev/uinput` (should show `crw-rw---- 1 root input`)
 
@@ -64,7 +67,7 @@ On Linux:
 - **Single-tap** Right Control to stop recording
 - **Double-tap** Right Alt to cancel recording
 
-Your speech will be automatically transcribed and typed at the current cursor position.
+Your speech will be automatically transcribed, copied to the clipboard, and then pasted at the current cursor position using a simulated Ctrl+V.
 
 To change the trigger key, stop the service and restart it with the `-d` option:
 

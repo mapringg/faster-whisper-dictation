@@ -1,7 +1,9 @@
+import contextlib
 import logging
 import time
 
 import uinput
+from pynput import keyboard  # Import pynput keyboard for key definitions
 
 logger = logging.getLogger(__name__)
 
@@ -91,21 +93,42 @@ CHAR_TO_KEY = {
     "]": uinput.KEY_RIGHTBRACE,
     "}": uinput.KEY_RIGHTBRACE,
     "\\": uinput.KEY_BACKSLASH,
-    "|": uinput.KEY_BACKSLASH,
+    "|": uinput.KEY_BACKSLASH,  # Needs Shift
     ";": uinput.KEY_SEMICOLON,
-    ":": uinput.KEY_SEMICOLON,
+    ":": uinput.KEY_SEMICOLON,  # Needs Shift
     "'": uinput.KEY_APOSTROPHE,
-    '"': uinput.KEY_APOSTROPHE,
+    '"': uinput.KEY_APOSTROPHE,  # Needs Shift
     "/": uinput.KEY_SLASH,
-    "?": uinput.KEY_SLASH,
+    "?": uinput.KEY_SLASH,  # Needs Shift
     "`": uinput.KEY_GRAVE,
-    "~": uinput.KEY_GRAVE,
+    "~": uinput.KEY_GRAVE,  # Needs Shift
     "\n": uinput.KEY_ENTER,
     "\t": uinput.KEY_TAB,
 }
 
-# Define which characters need shift
+# Define which characters need shift (more comprehensive)
 SHIFT_CHARS = set('ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()_+{}|:"<>?~')
+
+# Mapping from pynput special keys to uinput keys
+PYNPUT_TO_UINPUT = {
+    keyboard.Key.ctrl: uinput.KEY_LEFTCTRL,
+    keyboard.Key.ctrl_l: uinput.KEY_LEFTCTRL,
+    keyboard.Key.ctrl_r: uinput.KEY_RIGHTCTRL,
+    keyboard.Key.shift: uinput.KEY_LEFTSHIFT,
+    keyboard.Key.shift_l: uinput.KEY_LEFTSHIFT,
+    keyboard.Key.shift_r: uinput.KEY_RIGHTSHIFT,
+    keyboard.Key.alt: uinput.KEY_LEFTALT,
+    keyboard.Key.alt_l: uinput.KEY_LEFTALT,
+    keyboard.Key.alt_r: uinput.KEY_RIGHTALT,
+    keyboard.Key.cmd: uinput.KEY_LEFTMETA,  # Map Cmd to Meta (Super/Windows key)
+    keyboard.Key.cmd_l: uinput.KEY_LEFTMETA,
+    keyboard.Key.cmd_r: uinput.KEY_RIGHTMETA,
+    keyboard.Key.enter: uinput.KEY_ENTER,
+    keyboard.Key.space: uinput.KEY_SPACE,
+    keyboard.Key.tab: uinput.KEY_TAB,
+    keyboard.Key.backspace: uinput.KEY_BACKSPACE,
+    # Add other mappings as needed
+}
 
 
 class UInputKeyboardController:
@@ -114,56 +137,166 @@ class UInputKeyboardController:
     def __init__(self):
         """Initialize the UInput device with all supported keys."""
         try:
-            # Create a list of all unique keys we'll use
-            keys = list(set(CHAR_TO_KEY.values()))
-            # Add SHIFT key for uppercase letters and symbols
-            keys.append(uinput.KEY_LEFTSHIFT)
+            # Create a list of all unique keys we'll use from characters and special keys
+            char_keys = set(CHAR_TO_KEY.values())
+            special_keys = set(PYNPUT_TO_UINPUT.values())
+            # Ensure necessary modifier keys are included
+            modifier_keys = {
+                uinput.KEY_LEFTSHIFT,
+                uinput.KEY_RIGHTSHIFT,
+                uinput.KEY_LEFTCTRL,
+                uinput.KEY_RIGHTCTRL,
+                uinput.KEY_LEFTALT,
+                uinput.KEY_RIGHTALT,
+                uinput.KEY_LEFTMETA,
+                uinput.KEY_RIGHTMETA,
+            }
+            all_keys = list(char_keys | special_keys | modifier_keys)
 
             # Create the virtual input device
-            self.device = uinput.Device(keys)
+            self.device = uinput.Device(all_keys)
             # Allow some time for the device to be set up
             time.sleep(0.1)
-            logger.info("UInput keyboard controller initialized successfully")
+            logger.info(
+                f"UInput keyboard controller initialized successfully with {len(all_keys)} keys."
+            )
+        except PermissionError:
+            logger.error(
+                "Permission denied creating uinput device. "
+                "Ensure user is in the 'input' group and has write access to /dev/uinput."
+            )
+            raise
         except Exception as e:
             logger.error(f"Failed to initialize UInput keyboard controller: {str(e)}")
             raise
 
-    def type(self, char: str) -> None:
+    def _get_uinput_key(
+        self, key: str | keyboard.Key | keyboard.KeyCode
+    ) -> tuple[int | None, bool]:
         """
-        Type a single character.
+        Get the uinput key code and shift state for a character or pynput key.
 
         Args:
-            char: The character to type
+            key: The character (str) or pynput key object.
 
-        Raises:
-            ValueError: If character mapping is not found
+        Returns:
+            tuple[int | None, bool]: The uinput key code (or None if not found) and shift state.
         """
-        if char not in CHAR_TO_KEY:
-            logger.warning(f"No uinput mapping for character: {char}")
+        uinput_key = None
+        needs_shift = False
+
+        if isinstance(key, str) and len(key) == 1:
+            uinput_key = CHAR_TO_KEY.get(key)
+            needs_shift = key in SHIFT_CHARS
+        elif isinstance(key, keyboard.Key):
+            uinput_key = PYNPUT_TO_UINPUT.get(key)
+        elif isinstance(key, keyboard.KeyCode):
+            # Handle alphanumeric keys from KeyCode
+            if key.char and key.char in CHAR_TO_KEY:
+                uinput_key = CHAR_TO_KEY.get(key.char)
+                needs_shift = key.char in SHIFT_CHARS
+            # Could potentially map vk here if needed, but CHAR_TO_KEY is preferred
+
+        if uinput_key is None:
+            logger.warning(f"No uinput mapping found for key: {key}")
+
+        return uinput_key, needs_shift
+
+    def press(self, key: str | keyboard.Key | keyboard.KeyCode) -> None:
+        """
+        Press a key.
+
+        Args:
+            key: The character (str) or pynput key object to press.
+        """
+        uinput_key, needs_shift = self._get_uinput_key(key)
+        if uinput_key is None:
             return
 
         try:
-            key = CHAR_TO_KEY[char]
-            needs_shift = char in SHIFT_CHARS
-
             if needs_shift:
-                # Press shift
-                self.device.emit(uinput.KEY_LEFTSHIFT, 1)
-                time.sleep(0.001)
+                self.device.emit(uinput.KEY_LEFTSHIFT, 1)  # Press shift
+                time.sleep(
+                    0.005
+                )  # Slightly longer delay before key press when shift is involved
 
-            # Press and release the key
-            self.device.emit(key, 1)  # Press
-            time.sleep(0.001)
-            self.device.emit(key, 0)  # Release
-
-            if needs_shift:
-                # Release shift
-                time.sleep(0.001)
-                self.device.emit(uinput.KEY_LEFTSHIFT, 0)
-
-            # Small delay between keystrokes for stability
-            time.sleep(0.0025)
+            self.device.emit(uinput_key, 1)  # Press key
+            time.sleep(0.005)  # Delay after key press
+            # logger.debug(f"Pressed key: {key} (uinput: {uinput_key}, shift: {needs_shift})")
 
         except Exception as e:
-            logger.error(f"Error typing character '{char}': {str(e)}")
+            logger.error(f"Error pressing key '{key}': {str(e)}")
+            # Attempt to release shift if it was pressed
+            if needs_shift:
+                try:
+                    self.device.emit(uinput.KEY_LEFTSHIFT, 0)
+                except Exception:
+                    pass  # Ignore release error if press failed badly
             raise
+
+    def release(self, key: str | keyboard.Key | keyboard.KeyCode) -> None:
+        """
+        Release a key.
+
+        Args:
+            key: The character (str) or pynput key object to release.
+        """
+        uinput_key, needs_shift = self._get_uinput_key(key)
+        if uinput_key is None:
+            return
+
+        try:
+            self.device.emit(uinput_key, 0)  # Release key
+            time.sleep(0.005)  # Delay after key release
+            # logger.debug(f"Released key: {key} (uinput: {uinput_key}, shift: {needs_shift})")
+
+            if needs_shift:
+                time.sleep(0.005)  # Delay before releasing shift
+                self.device.emit(uinput.KEY_LEFTSHIFT, 0)  # Release shift
+                time.sleep(0.005)  # Delay after releasing shift
+
+        except Exception as e:
+            logger.error(f"Error releasing key '{key}': {str(e)}")
+            # Don't re-raise here usually, as release might follow a failed press
+
+    @contextlib.contextmanager
+    def pressed(self, *keys: str | keyboard.Key | keyboard.KeyCode) -> None:
+        """
+        Context manager to press and hold keys.
+
+        Args:
+            *keys: The keys to press and hold.
+        """
+        try:
+            for key in keys:
+                self.press(key)
+            yield
+        finally:
+            # Release keys in reverse order
+            for key in reversed(keys):
+                try:
+                    self.release(key)
+                except Exception as e:
+                    # Log error but continue releasing other keys
+                    logger.error(
+                        f"Error releasing key '{key}' in context manager: {str(e)}"
+                    )
+
+    def type(self, char: str) -> None:
+        """
+        Type a single character (press and release).
+
+        Args:
+            char: The character to type
+        """
+        # Use press/release for consistency, handles shift automatically
+        try:
+            self.press(char)
+            # Release happens almost immediately for typing
+            time.sleep(0.001)
+            self.release(char)
+            # Small delay between distinct characters
+            time.sleep(0.0025)
+        except Exception:
+            # Error already logged in press/release
+            pass  # Don't re-log or raise here for typing individual chars

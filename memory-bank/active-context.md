@@ -1,13 +1,27 @@
 # Active Context
 
-- **Current Focus:** Updating Memory Bank to reflect the project's shift from supporting local `faster-whisper` to _exclusively_ using cloud APIs (OpenAI/Groq) based on user feedback.
+- **Current Focus:** Debugging Linux copy-paste functionality. Switched clipboard utility from `xclip` to `xsel` to address persistent copy delay.
 - **Recent Changes:**
-  - Updated `project-brief.md`, `product-context.md`, `system-patterns.md`, `tech-context.md` to reflect cloud-only transcription focus and remove references to local models/libraries.
+  - **Attempt 1 (Previous Task):**
+    - Implemented Linux copy (`xclip`) + paste (Ctrl+V via `uinput`).
+    - Enhanced `uinput_controller`.
+    - Updated docs for `xclip`.
+  - **Attempt 2 (Debugging `xclip`):**
+    - Switched `xclip` call to `subprocess.Popen` + `communicate()`.
+    - Added small delays to `uinput` press/release.
+    - Result: Paste worked, but `xclip` delay persisted.
+  - **Attempt 3 (Current Debugging):**
+    - Modified `src/services/input_handler.py` to use `xsel --clipboard --input` instead of `xclip`.
+    - Modified `setup.sh` to check for `xsel` instead of `xclip`.
+    - Updated `README.md`, `memory-bank/tech-context.md`, `memory-bank/system-patterns.md`, and `memory-bank/progress.md` to reflect the switch to `xsel`.
 - **Next Steps:**
-  - Update `progress.md` to log the historical decision to remove local transcription.
-  - Final review of Memory Bank consistency.
-- **Active Decisions/Considerations:** Ensuring all documentation accurately represents the current cloud-only architecture and removes references/implications of the previous local transcription capability.
+  - Awaiting user feedback on whether using `xsel` resolves the copy delay issue on Linux.
+  - If issues persist, further investigation needed (e.g., clipboard manager interactions, alternative libraries like `pyperclip`).
+- **Active Decisions/Considerations:**
+  - Testing `xsel` as an alternative to `xclip` due to unexplained delays with `xclip`.
 - **Key Patterns/Preferences:**
-  - Environment variables are the preferred method for configuration (e.g., API keys).
-  - Loading priority: Shell > Project (`./.env`) > Home (`$HOME/.env`).
-- **Learnings/Insights:** The project uses a custom function (`src/core/utils.py::load_env_from_file`) for loading `.env` files.
+  - Use `subprocess.Popen` + `communicate()` for external command interaction.
+  - Be prepared to switch external dependencies (`xclip` -> `xsel`) when debugging platform-specific issues.
+- **Learnings/Insights:**
+  - `xclip` can exhibit unexpected delays in certain environments even when called via `Popen`.
+  - `xsel` is a viable alternative for Linux clipboard interaction.

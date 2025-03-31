@@ -37,7 +37,7 @@
       App -- Start/Stop --> REC
       REC -- Audio Data --> App -- Pass To --> TRX
       TRX -- Text Segments --> App -- Pass To --> KBR
-      KBR -- Type Chars --> KCF
+      KBR -- Copy & Paste --> KCF
       App -- Updates State --> SI
 
       style App fill:#f9f,stroke:#333,stroke-width:2px
@@ -74,13 +74,13 @@
   - `DoubleKeyListener` listens for keyboard events and triggers state transitions in `App`.
   - `Recorder` captures audio when instructed by `App`.
   - `Transcriber` processes audio data (received via `App` callback) and sends text results back (via `App` callback).
-  - `KeyboardReplayer` receives text from `App` and uses the OS-specific controller (via factory) to type it.
+  - `KeyboardReplayer` receives text from `App`, copies it to the system clipboard (`pbcopy` on macOS, `xsel` on Linux), and then uses the OS-specific controller (via factory) to simulate a paste command (Cmd+V or Ctrl+V).
   - `StatusIcon` runs (potentially in a separate thread) to display status based on `App` state changes and sends user configuration requests back to `App` via callbacks.
   - `src/core/utils.py` provides common utilities used by various components (env loading, sound playback).
 
 - **Critical Implementation Paths:**
   - **Recording Trigger Flow:** `DoubleKeyListener.on_press` -> `App._safe_start_recording` -> `App` state change to `RECORDING` -> `Recorder.start`.
   - **Transcription Flow:** `Recorder` completes -> Callback to `App` -> `App._safe_start_transcription` -> `App` state change to `TRANSCRIBING` -> `Transcriber.transcribe` -> API call -> Callback to `App`.
-  - **Typing Flow:** `Transcriber` callback to `App` -> `App._safe_start_replay` -> `App` state change to `REPLAYING` -> `KeyboardReplayer.replay` -> `KeyboardController.type`.
+  - **Output Flow (Copy & Paste):** `Transcriber` callback to `App` -> `App._safe_start_replay` -> `App` state change to `REPLAYING` -> `KeyboardReplayer.replay` -> (Copies text via `pbcopy`/`xsel`) -> (Simulates paste via `KeyboardController`).
   - **Configuration Loading:** `App` initialization and `run.sh` both utilize `load_env_from_file` logic to ensure consistent API key access based on defined priority.
   - **System Tray Interaction:** User clicks menu item in `StatusIcon` -> Callback (`_select_language`, `_toggle_sounds`, etc.) -> Calls registered callback in `App` (`_change_language`, `_toggle_sounds`).
