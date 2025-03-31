@@ -139,6 +139,17 @@ EOF
 
 elif [[ -f /etc/debian_version ]] || [[ -f /etc/linuxmint/info ]]; then
     log "Setting up for Linux Mint/Debian..."
+
+    # Check for xsel dependency
+    if ! command -v xsel &> /dev/null; then
+        log "$(tput setaf 1)$(tput bold)Warning: 'xsel' command not found.$(tput sgr0)"
+        log "$(tput setaf 3)xsel is required for copying transcribed text to the clipboard on Linux."
+        log "$(tput setaf 3)Please install it using your package manager, e.g.: sudo apt update && sudo apt install xsel$(tput sgr0)"
+        log "$(tput setaf 3)The application might not function correctly without xsel.$(tput sgr0)"
+        # Optionally, pause here: read -p "Press Enter to continue setup despite missing xsel, or Ctrl+C to cancel..."
+    else
+        log "Found required 'xsel' command."
+    fi
     
     # Set up uinput for Linux
     setup_uinput
@@ -189,4 +200,4 @@ else
     exit 1
 fi
 
-log "Setup completed successfully!" 
+log "Setup completed successfully!"

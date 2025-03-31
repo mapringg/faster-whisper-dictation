@@ -180,37 +180,87 @@ class KeyboardReplayer:
                 else:
                     logger.warning("No text generated to copy to clipboard.")
 
-            else:  # Original logic for non-macOS systems
-                # Use context manager for lock
-                with self.lock:
-                    # Process each segment
-                    for segment in segments:
-                        is_first = True
+            else:  # Linux specific logic (using xclip + paste)
+                logger.info("Linux detected, using xclip and paste simulation.")
+                full_text = ""
+                is_first_char_overall = True
+                for segment in segments:
+                    for char in segment.text:
+                        # Skip leading space only for the very first character overall
+                        if is_first_char_overall and char == " ":
+                            is_first_char_overall = False
+                            continue
+                        is_first_char_overall = False  # Mark after first non-space char
+                        full_text += char
 
-                        # Process each character in segment
-                        for char in segment.text:
-                            # Skip leading space in first segment
-                            if is_first and char == " ":
-                                is_first = False
-                                continue
+                if full_text:
+                    try:
+                        # Use subprocess.Popen for better control over xsel
+                        logger.info(
+                            "Attempting to copy text to clipboard using xsel via Popen..."
+                        )
+                        process = subprocess.Popen(
+                            ["xsel", "--clipboard", "--input"],  # Use xsel command
+                            stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                        )
+                        stdout, stderr = process.communicate(input=full_text)
 
-                            # Set is_first to False after processing the first character
-                            is_first = False
+                        if process.returncode == 0:
+                            logger.info(
+                                f"Successfully copied {len(full_text)} characters to clipboard via xsel."
+                            )
+                            # Increase delay slightly before pasting
+                            time.sleep(0.2)
+                        else:
+                            # Raise an error to be caught by the outer exception handler
+                            raise subprocess.CalledProcessError(
+                                process.returncode,
+                                process.args,
+                                stdout,
+                                stderr,  # Keep error details
+                            )
 
-                            # Type character with retry mechanism
-                            if self._type_with_retry(char):
-                                text_buffer.append(char)
-                                time.sleep(self.typing_delay)
-                            else:
-                                logger.warning(
-                                    f"Skipping character '{char}' due to repeated errors"
-                                )
+                        # Simulate Control + V paste shortcut (No changes needed here)
+                        try:
+                            logger.info(
+                                "Attempting to paste from clipboard (Ctrl+V)..."
+                            )
+                            # Assuming self.kb maps pynput keys or uses uinput equivalents
+                            # Need to verify UInputController handles this correctly
+                            with self.kb.pressed(
+                                keyboard.Key.ctrl
+                            ):  # Or specific uinput key if needed
+                                self.kb.press("v")
+                                self.kb.release("v")
+                            logger.info("Paste command (Ctrl+V) executed.")
+                        except AttributeError:
+                            logger.error(
+                                "Keyboard controller does not support 'pressed' context manager or required keys (Ctrl/V). Paste simulation failed."
+                            )
+                        except Exception as paste_err:
+                            logger.error(
+                                f"Error simulating paste (Ctrl+V): {paste_err}"
+                            )
 
-                    # Log final typed text
-                    if text_buffer:
-                        logger.info(f"Successfully typed text: {''.join(text_buffer)}")
-                    else:
-                        logger.warning("No text was typed")
+                    except subprocess.CalledProcessError as e:
+                        logger.error(
+                            f"Failed to copy text to clipboard using xsel: {e}"
+                        )
+                        logger.error(f"xsel stderr: {e.stderr}")
+                        logger.error(f"xsel stdout: {e.stdout}")
+                    except FileNotFoundError:
+                        logger.error(
+                            "xsel command not found. Please install xsel for clipboard functionality on Linux."
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"An unexpected error occurred while using xsel: {e}"
+                        )
+                else:
+                    logger.warning("No text generated to copy to clipboard.")
 
         except Exception as e:
             logger.error(f"Unexpected error during text replay: {str(e)}")
