@@ -18,6 +18,12 @@ if [ -f "$HOME/.env" ]; then
     source "$HOME/.env"
 fi
 
+# Source .env file from project directory if it exists (overrides home .env)
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    log "Loading environment from $SCRIPT_DIR/.env"
+    source "$SCRIPT_DIR/.env"
+fi
+
 # Parse command line arguments to check for transcriber selection
 TRANSCRIBER="openai"  # Default to OpenAI
 for arg in "$@"; do
@@ -31,13 +37,13 @@ done
 if [ "$TRANSCRIBER" = "openai" ]; then
     if [ -z "$OPENAI_API_KEY" ]; then
         log "Error: OPENAI_API_KEY environment variable is not set"
-        log "Please set it in $HOME/.env file with: OPENAI_API_KEY=your_api_key_here"
+        log "Please set it directly, in ./env, or in ~/.env file."
         exit 1
     fi
 else
     if [ -z "$GROQ_API_KEY" ]; then
         log "Error: GROQ_API_KEY environment variable is not set"
-        log "Please set it in $HOME/.env file with: GROQ_API_KEY=your_api_key_here"
+        log "Please set it directly, in ./env, or in ~/.env file."
         exit 1
     fi
 fi

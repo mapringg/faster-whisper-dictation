@@ -51,19 +51,24 @@ class BaseTranscriber(ABC):
         self.model = model
         self.api_key_env_var = api_key_env_var
 
-        # Try to get API key from environment
-        self.api_key = os.environ.get(self.api_key_env_var)
+        # Load environment variables with priority: Shell > Project .env > Home .env
+        # 1. Load from home directory .env (lowest priority)
+        home_env_file = os.path.join(str(Path.home()), ".env")
+        load_env_from_file(home_env_file)  # Function handles non-existence gracefully
 
-        # If not found, try to load from ~/.env file
-        if not self.api_key:
-            env_file = os.path.join(str(Path.home()), ".env")
-            if load_env_from_file(env_file):
-                self.api_key = os.environ.get(self.api_key_env_var)
+        # 2. Load from project directory .env (overrides home .env)
+        project_env_file = ".env"  # Assumes CWD is project root
+        load_env_from_file(
+            project_env_file
+        )  # Function handles non-existence gracefully
+
+        # 3. Check environment (highest priority, includes loaded vars)
+        self.api_key = os.environ.get(self.api_key_env_var)
 
         if not self.api_key:
             raise ValueError(
                 f"{self.api_key_env_var} environment variable is not set. "
-                "Please set it in your environment or in ~/.env file."
+                "Please set it directly, in ./env, or in ~/.env."
             )
 
     def get_prompt(self, language: str | None) -> str:
