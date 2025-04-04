@@ -50,26 +50,24 @@
       style KCF fill:#lightblue,stroke:#333,stroke-width:1px
   ```
 
-- **Key Technical Decisions:**
+- **Key Technical Decisions & Architectural Patterns:**
 
-  - **State Machine:** Using the `transitions` library (`src/core/state_machine.py`) to manage application states ensures predictable behavior and simplifies handling different stages (ready, recording, etc.).
-  - **API Abstraction (Cloud Only):** Using a `BaseTranscriber` class (`src/services/transcriber.py`) with specific cloud implementations (OpenAI, Groq) allows swapping cloud providers via a Strategy pattern. Local transcription is explicitly excluded.
-  - **OS-Specific Keyboard Control:** Employing a factory (`src/services/keyboard_controller_factory.py`) to provide the appropriate keyboard simulation mechanism (`uinput` for Linux, `pynput` likely for macOS) isolates platform dependencies.
+  - **State Machine:** Using the `transitions` library (`src/core/state_machine.py`) to manage application states (Ready, Recording, Transcribing, Replaying) ensures predictable behavior and simplifies handling different stages. (State Pattern)
+  - **API Abstraction (Cloud Only):** Using a `BaseTranscriber` class (`src/services/transcriber.py`) with specific cloud implementations (OpenAI, Groq) allows swapping cloud providers. Local transcription is explicitly excluded. (Strategy Pattern)
+  - **OS-Specific Keyboard Control:** Employing a factory (`src/services/keyboard_controller_factory.py`) to provide the appropriate keyboard simulation mechanism (`uinput` for Linux, `pynput` for macOS) isolates platform dependencies. (Factory Pattern)
   - **Environment Variable Configuration:** Centralizing configuration loading (API keys) via environment variables with a clear priority (Shell > Project > Home) provides flexibility (`src/core/utils.py::load_env_from_file`, `run.sh`).
-  - **System Tray Icon:** Using `pystray` for a status indicator provides visual feedback and a simple interface for runtime adjustments (language, transcriber) without a full GUI.
+  - **System Tray Icon:** Using `pystray` for a status indicator provides visual feedback and a simple interface for runtime adjustments (language, transcriber) without a full GUI. (Implicit Observer Pattern)
+  - **Script-Based Installation:** Utilizing `setup.sh` and `revert_setup.sh` provides a consistent mechanism for dependency installation, virtual environment creation, service configuration (systemd/launchd), and permission handling across supported OS.
+  - **Automated Code Quality:** Employing `pre-commit` hooks (configured in `.pre-commit-config.yaml`) enforces code style and quality standards (e.g., formatting, linting) before commits, contributing to maintainability.
 
-- **Design Patterns:**
+- **Other Design Patterns:**
 
-  - **State Pattern:** Core application flow managed by `App` and `state_machine.py`.
-  - **Strategy Pattern:** `BaseTranscriber` with `OpenAITranscriber` and `GroqTranscriber` implementations for cloud API interaction.
-  - **Factory Pattern:** `keyboard_controller_factory.py` for OS-specific keyboard controllers.
   - **Callback Pattern:** Used extensively for communication between components (e.g., `Recorder` -> `App`, `Transcriber` -> `App`, `StatusIcon` -> `App`).
-  - **Observer Pattern (Implicit):** `StatusIcon` observes the state managed by `App`.
   - **Context Manager:** Used in `Recorder` (`_stream_context`, `_recording_state`) for resource management.
 
 - **Component Relationships:**
 
-  - `main.py` (entry point) likely parses arguments using `src/cli.py` and instantiates/runs `src/core/app.py::App`.
+  - `main.py` (entry point) parses arguments using `src/cli.py` and instantiates/runs `src/core/app.py::App`.
   - `App` orchestrates the main workflow, holding instances of key services (`DoubleKeyListener`, `Recorder`, `Transcriber`, `KeyboardReplayer`, `StatusIcon`).
   - `DoubleKeyListener` listens for keyboard events and triggers state transitions in `App`.
   - `Recorder` captures audio when instructed by `App`.
@@ -84,3 +82,5 @@
   - **Output Flow (Copy & Paste):** `Transcriber` callback to `App` -> `App._safe_start_replay` -> `App` state change to `REPLAYING` -> `KeyboardReplayer.replay` -> (Copies text via `pbcopy`/`xsel`) -> (Simulates paste via `KeyboardController`).
   - **Configuration Loading:** `App` initialization and `run.sh` both utilize `load_env_from_file` logic to ensure consistent API key access based on defined priority.
   - **System Tray Interaction:** User clicks menu item in `StatusIcon` -> Callback (`_select_language`, `_toggle_sounds`, etc.) -> Calls registered callback in `App` (`_change_language`, `_toggle_sounds`).
+
+_[YYYY-MM-DD HH:MM:SS] - Added script-based installation and pre-commit usage to Key Technical Decisions._
