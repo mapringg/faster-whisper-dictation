@@ -54,11 +54,12 @@
 
   - **State Machine:** Using the `transitions` library (`src/core/state_machine.py`) to manage application states (Ready, Recording, Transcribing, Replaying) ensures predictable behavior and simplifies handling different stages. (State Pattern)
   - **API Abstraction (Cloud Only):** Using a `BaseTranscriber` class (`src/services/transcriber.py`) with specific cloud implementations (OpenAI, Groq) allows swapping cloud providers. Local transcription is explicitly excluded. (Strategy Pattern)
-  - **OS-Specific Keyboard Control:** Employing a factory (`src/services/keyboard_controller_factory.py`) to provide the appropriate keyboard simulation mechanism (`uinput` for Linux, `pynput` for macOS) isolates platform dependencies. (Factory Pattern)
-  - **Environment Variable Configuration:** Centralizing configuration loading (API keys) via environment variables with a clear priority (Shell > Project > Home) provides flexibility (`src/core/utils.py::load_env_from_file`, `run.sh`).
+  - **OS-Specific Keyboard Control:** Employing a factory (`src/services/keyboard_controller_factory.py`) to provide the appropriate keyboard simulation mechanism (`python-uinput` for Linux, `pynput` for macOS) isolates platform dependencies. (Factory Pattern - Decision: Specific libraries chosen for OS compatibility).
+  - **Clipboard Utility (Linux):** Explicitly switched from `xclip` to `xsel` via `subprocess` calls to address persistent copy delays encountered with `xclip`. (Decision: Driven by debugging platform-specific issues).
+  - **Environment Variable Configuration:** Centralizing configuration loading (API keys) via environment variables with a clear priority (Shell > Project > Home) provides flexibility (`src/core/utils.py::load_env_from_file`, `run.sh`). (Decision: Support project-level overrides).
   - **System Tray Icon:** Using `pystray` for a status indicator provides visual feedback and a simple interface for runtime adjustments (language, transcriber) without a full GUI. (Implicit Observer Pattern)
-  - **Script-Based Installation:** Utilizing `setup.sh` and `revert_setup.sh` provides a consistent mechanism for dependency installation, virtual environment creation, service configuration (systemd/launchd), and permission handling across supported OS.
-  - **Automated Code Quality:** Employing `pre-commit` hooks (configured in `.pre-commit-config.yaml`) enforces code style and quality standards (e.g., formatting, linting) before commits, contributing to maintainability.
+  - **Script-Based Installation:** Utilizing `setup.sh` and `revert_setup.sh` provides a consistent mechanism for dependency installation, virtual environment creation, service configuration (systemd/launchd), and permission handling across supported OS. (Decision: Adopted for simpler user setup).
+  - **Automated Code Quality:** Employing `pre-commit` hooks (configured in `.pre-commit-config.yaml`) enforces code style and quality standards (e.g., formatting, linting) before commits, contributing to maintainability. (Decision: Implemented for code consistency).
 
 - **Other Design Patterns:**
 
@@ -72,14 +73,14 @@
   - `DoubleKeyListener` listens for keyboard events and triggers state transitions in `App`.
   - `Recorder` captures audio when instructed by `App`.
   - `Transcriber` processes audio data (received via `App` callback) and sends text results back (via `App` callback).
-  - `KeyboardReplayer` receives text from `App`, copies it to the system clipboard (`pbcopy` on macOS, `xsel` on Linux), and then uses the OS-specific controller (via factory) to simulate a paste command (Cmd+V or Ctrl+V).
+  - `KeyboardReplayer` receives text from `App`, copies it to the system clipboard (`pbcopy` on macOS, `xsel --clipboard --input` on Linux), and then uses the OS-specific controller (via factory) to simulate a paste command (Cmd+V or Ctrl+V).
   - `StatusIcon` runs (potentially in a separate thread) to display status based on `App` state changes and sends user configuration requests back to `App` via callbacks.
   - `src/core/utils.py` provides common utilities used by various components (env loading, sound playback).
 
 - **Critical Implementation Paths:**
   - **Recording Trigger Flow:** `DoubleKeyListener.on_press` -> `App._safe_start_recording` -> `App` state change to `RECORDING` -> `Recorder.start`.
   - **Transcription Flow:** `Recorder` completes -> Callback to `App` -> `App._safe_start_transcription` -> `App` state change to `TRANSCRIBING` -> `Transcriber.transcribe` -> API call -> Callback to `App`.
-  - **Output Flow (Copy & Paste):** `Transcriber` callback to `App` -> `App._safe_start_replay` -> `App` state change to `REPLAYING` -> `KeyboardReplayer.replay` -> (Copies text via `pbcopy`/`xsel`) -> (Simulates paste via `KeyboardController`).
+  - **Output Flow (Copy & Paste):** `Transcriber` callback to `App` -> `App._safe_start_replay` -> `App` state change to `REPLAYING` -> `KeyboardReplayer.replay` -> (Copies text via `pbcopy` on macOS / `xsel --clipboard --input` on Linux) -> (Simulates paste via OS-specific `KeyboardController` - `pynput`/`python-uinput`).
   - **Configuration Loading:** `App` initialization and `run.sh` both utilize `load_env_from_file` logic to ensure consistent API key access based on defined priority.
   - **System Tray Interaction:** User clicks menu item in `StatusIcon` -> Callback (`_select_language`, `_toggle_sounds`, etc.) -> Calls registered callback in `App` (`_change_language`, `_toggle_sounds`).
 
