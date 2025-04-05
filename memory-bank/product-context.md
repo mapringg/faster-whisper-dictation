@@ -4,7 +4,7 @@
 
 - **Problem:** Users need a quick and seamless way to dictate high-quality text into any application without interrupting their workflow, ideally using a fast copy-paste mechanism rather than slower character-by-character typing.
 
-- **Solution / Core Goal:** Provide a lightweight, fast, and accurate background dictation service for Linux and macOS. It listens for keyboard shortcuts, records audio, sends it _exclusively_ to high-performance cloud transcription services (OpenAI or Groq) for optimal accuracy, copies the result to the clipboard, and simulates a paste command (Cmd+V/Ctrl+V) into the active application.
+- **Solution / Core Goal:** Provide a lightweight, fast, and accurate background dictation service for Linux and macOS. It listens for keyboard shortcuts, records audio, sends it **exclusively** to high-performance cloud transcription services (OpenAI or Groq) for optimal accuracy, and outputs the result via a **copy-paste mechanism** (copying to clipboard and simulating Cmd+V/Ctrl+V) into the active application. (Decision: Local transcription explicitly removed).
 
 - **Target Users:** Developers, writers, students, or anyone who frequently types and prioritizes transcription accuracy and speed, benefiting from a hands-free, clipboard-based way to input text using cloud-powered voice recognition.
 
