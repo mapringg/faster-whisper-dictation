@@ -1,8 +1,11 @@
 import logging
 import platform
+import re
 import signal
+import subprocess
 import threading
 import time
+import webbrowser
 
 import numpy as np
 from pynput import keyboard
@@ -142,6 +145,14 @@ class App:
 
     def _on_enter_replaying(self, event):
         """Handle entering REPLAYING state."""
+        self.last_transcription = None
+        # Extract segments from event kwargs
+        segments = event.kwargs.get("segments") if hasattr(event, "kwargs") else None
+        if segments:
+            # Combine text from all segments into a single string
+            combined_text = " ".join(segment.text for segment in segments)
+            self.last_transcription = combined_text
+
         # Check for transcription error
         error = event.kwargs.get("error") if hasattr(event, "kwargs") else None
 
@@ -266,6 +277,41 @@ class App:
                 logger.info("Replaying transcribed text...")
                 self.status_icon.update_state(StatusIconState.REPLAYING)
 
+            # Conditional Gemini workflow
+            transcription = getattr(self, "last_transcription", None)
+            if transcription is not None and isinstance(transcription, str):
+                idx = transcription.lower().find("using gemini")
+                if idx != -1:
+                    # Improved text processing for "using Gemini"
+                    processed_text = re.sub(
+                        r"\s*using gemini\s*",
+                        " ",
+                        transcription,
+                        count=1,
+                        flags=re.IGNORECASE,
+                    )
+                    text_to_paste = processed_text.strip()
+                    if text_to_paste.startswith((",", ":")):
+                        text_to_paste = text_to_paste[
+                            1:
+                        ].lstrip()  # Remove first char and leading space
+
+                    # Capitalize first letter if lowercase
+                    if text_to_paste and text_to_paste[0].islower():
+                        text_to_paste = text_to_paste[0].upper() + text_to_paste[1:]
+
+                    # Remove trailing space before punctuation if present
+                    if len(text_to_paste) > 1:
+                        if text_to_paste.endswith(" ?"):
+                            text_to_paste = text_to_paste[:-2] + "?"
+                        elif text_to_paste.endswith(" ."):
+                            text_to_paste = text_to_paste[:-2] + "."
+                        elif text_to_paste.endswith(" !"):
+                            text_to_paste = text_to_paste[:-2] + "!"
+
+                    self._handle_gemini_workflow(text_to_paste)
+                    return
+
             # Then start replay (which will trigger state transition when done)
             self.replayer.replay(event)
         except Exception as e:
@@ -273,6 +319,53 @@ class App:
             with self.status_icon_lock:
                 self.status_icon.update_state(StatusIconState.ERROR)
             self.m.to_READY()
+
+    def _handle_gemini_workflow(self, text_to_paste):
+        """
+        Handles the Gemini workflow: copies text to clipboard, opens Gemini, pastes, and submits.
+        """
+        logger.info(f"Gemini workflow: Text to paste: '{text_to_paste}'")
+        # Copy text_to_paste to clipboard using system command
+        clipboard_cmd = None
+        system_name = platform.system()
+        if system_name == "Darwin":
+            clipboard_cmd = ["pbcopy"]
+        elif system_name == "Linux":
+            clipboard_cmd = ["xsel", "-ib"]
+
+        if clipboard_cmd:
+            try:
+                subprocess.run(
+                    clipboard_cmd, input=text_to_paste.encode("utf-8"), check=True
+                )
+                logger.info(
+                    f"Copied text to clipboard using: {' '.join(clipboard_cmd)}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to copy text to clipboard: {e}")
+        else:
+            logger.warning(f"Clipboard copy not supported on platform: {system_name}")
+
+        # Open Gemini in new tab
+        webbrowser.open("https://gemini.google.com/", new=2)
+        time.sleep(1.5)
+        kb = keyboard.Controller()
+        # Determine modifier key
+        if platform.system() == "Darwin":
+            mod = keyboard.Key.cmd
+        else:
+            mod = keyboard.Key.ctrl
+        # Simulate paste (Cmd/Ctrl+V)
+        kb.press(mod)
+        kb.press("v")
+        kb.release("v")
+        kb.release(mod)
+        time.sleep(0.2)
+        # Simulate Enter
+        kb.press(keyboard.Key.enter)
+        kb.release(keyboard.Key.enter)
+        # Manually trigger state transition back to IDLE/READY after Gemini workflow
+        self.m.finish_replaying()
 
     def _timer_loop(self) -> None:
         """Continuous timer monitoring loop using threading.Timer for efficiency."""
