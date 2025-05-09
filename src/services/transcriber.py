@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import os
@@ -88,13 +89,13 @@ class BaseTranscriber(ABC):
 
     @abstractmethod
     def make_api_request(
-        self, temp_filename: str, language: str | None = None
+        self, audio_data: io.BytesIO, language: str | None = None
     ) -> tuple[bool, dict | str]:
         """
         Make API request with retry mechanism.
 
         Args:
-            temp_filename: Path to temporary audio file
+            audio_data: BytesIO object containing audio data
             language: Optional language code for transcription
 
         Returns:
@@ -109,28 +110,24 @@ class BaseTranscriber(ABC):
         Handle the transcription process from audio input to text output.
 
         Args:
-            event: State machine event containing audio filename and language info
+            event: State machine event containing audio_data (BytesIO) and language info
 
         Returns:
             None: Results are passed to the callback function
         """
         logger.info(f"Starting transcription with {self.__class__.__name__}...")
-        audio_filename = event.kwargs.get("audio_filename", None)
+        audio_data = event.kwargs.get("audio_data", None)
         language = event.kwargs.get("language")
 
-        # Validate audio filename
-        if (
-            audio_filename is None
-            or not os.path.exists(audio_filename)
-            or os.path.getsize(audio_filename) == 0
-        ):
-            logger.warning("Invalid or empty audio file provided")
+        # Validate audio data
+        if audio_data is None or audio_data.getbuffer().nbytes == 0:
+            logger.warning("Invalid or empty audio data provided")
             self.callback(segments=[])
             return
 
         try:
             # Make API request and handle response
-            success, result_or_error = self.make_api_request(audio_filename, language)
+            success, result_or_error = self.make_api_request(audio_data, language)
 
             if success:
                 text = result_or_error.get("text", "")
@@ -153,12 +150,20 @@ class BaseTranscriber(ABC):
 
         finally:
             # Clean up the temporary file
-            try:
-                if audio_filename and os.path.exists(audio_filename):
-                    os.unlink(audio_filename)
-                    logger.info(f"Temporary file {audio_filename} deleted")
-            except Exception as e:
-                logger.error(f"Error deleting temporary file: {str(e)}")
+            # try:
+            #     if audio_filename and os.path.exists(audio_filename):
+            #         os.unlink(audio_filename)
+            #         logger.info(f"Temporary file {audio_filename} deleted")
+            # except Exception as e:
+            #     logger.error(f"Error deleting temporary file: {str(e)}")
+
+            # Ensure the BytesIO object is closed if it's still open
+            if audio_data and not audio_data.closed:
+                try:
+                    audio_data.close()
+                    logger.info("In-memory audio data buffer closed.")
+                except Exception as e:
+                    logger.error(f"Error closing in-memory audio data buffer: {str(e)}")
 
             # Final garbage collection
             import gc
@@ -183,13 +188,13 @@ class GroqTranscriber(BaseTranscriber):
         super().__init__(callback, "GROQ_API_KEY", model)
 
     def make_api_request(
-        self, temp_filename: str, language: str | None = None
+        self, audio_data: io.BytesIO, language: str | None = None
     ) -> tuple[bool, dict | str]:
         """
         Make API request to Groq with retry mechanism.
 
         Args:
-            temp_filename: Path to temporary FLAC file
+            audio_data: BytesIO object containing audio WAV data
             language: Optional language code for transcription
 
         Returns:
@@ -200,88 +205,80 @@ class GroqTranscriber(BaseTranscriber):
 
         for attempt in range(self.MAX_RETRIES):
             try:
-                with open(temp_filename, "rb") as audio_file:
-                    # Get appropriate prompt
-                    prompt = self.get_prompt(language)
+                audio_data.seek(0)
+                # Get appropriate prompt
+                prompt = self.get_prompt(language)
 
-                    data = {
-                        "model": self.model,
-                        "prompt": prompt,
-                        "temperature": 0.0,
-                    }
+                data = {
+                    "model": self.model,
+                    "prompt": prompt,
+                    "temperature": 0.0,
+                }
 
-                    if language and isinstance(language, str):
-                        data["language"] = language
-                        logger.info(f"Using language: {language}")
+                if language and isinstance(language, str):
+                    data["language"] = language
+                    logger.info(f"Using language: {language}")
 
-                    # Stream the file directly without loading into memory
-                    files = {"file": (os.path.basename(temp_filename), audio_file)}
-                    response = requests.post(
-                        self.API_ENDPOINT,
-                        headers=headers,
-                        files=files,
-                        data=data,
-                        timeout=self.REQUEST_TIMEOUT,
-                    )
+                # Pass the BytesIO object directly
+                files = {"file": ("audio.wav", audio_data, "audio/wav")}
+                response = requests.post(
+                    self.API_ENDPOINT,
+                    headers=headers,
+                    files=files,
+                    data=data,
+                    timeout=self.REQUEST_TIMEOUT,
+                )
 
-                    # Handle successful response
-                    if response.status_code == 200:
-                        try:
-                            result = response.json()
-                            # Close the response to release resources
-                            response.close()
-                            return (True, result)
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Failed to decode JSON response: {str(e)}")
-                            # Close the response to release resources
-                            if response:
-                                response.close()
-                            continue
-
-                    # Handle rate limiting
-                    elif response.status_code == 429:
-                        retry_after = int(
-                            response.headers.get(
-                                "Retry-After", self.INITIAL_RETRY_DELAY
-                            )
-                        )
-                        logger.warning(
-                            f"Rate limited. Waiting {retry_after} seconds..."
-                        )
+                # Handle successful response
+                if response.status_code == 200:
+                    try:
+                        result = response.json()
                         # Close the response to release resources
                         response.close()
-                        time.sleep(retry_after)
+                        return (True, result)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to decode JSON response: {str(e)}")
+                        # Close the response to release resources
+                        if response:
+                            response.close()
                         continue
 
-                    # Handle other API errors
-                    else:
+                # Handle rate limiting
+                elif response.status_code == 429:
+                    retry_after = int(
+                        response.headers.get("Retry-After", self.INITIAL_RETRY_DELAY)
+                    )
+                    logger.warning(f"Rate limited. Waiting {retry_after} seconds...")
+                    # Close the response to release resources
+                    response.close()
+                    time.sleep(retry_after)
+                    continue
+
+                # Handle other API errors
+                else:
+                    error_msg = f"API error: {response.status_code} - {response.text}"
+                    logger.error(error_msg)
+
+                    # Close the response to release resources
+                    response.close()
+
+                    # Handle specific error cases
+                    if response.status_code == 401:
+                        error_msg = "Invalid API key - please check your GROQ_API_KEY"
+                        logger.error(error_msg)
+                        return (False, error_msg)
+                    elif response.status_code == 413:
                         error_msg = (
-                            f"API error: {response.status_code} - {response.text}"
+                            "Audio file too large - try recording a shorter segment"
                         )
                         logger.error(error_msg)
+                        return (False, error_msg)
 
-                        # Close the response to release resources
-                        response.close()
-
-                        # Handle specific error cases
-                        if response.status_code == 401:
-                            error_msg = (
-                                "Invalid API key - please check your GROQ_API_KEY"
-                            )
-                            logger.error(error_msg)
-                            return (False, error_msg)
-                        elif response.status_code == 413:
-                            error_msg = (
-                                "Audio file too large - try recording a shorter segment"
-                            )
-                            logger.error(error_msg)
-                            return (False, error_msg)
-
-                        # Exponential backoff for retries
-                        if attempt < self.MAX_RETRIES - 1:
-                            wait_time = self.INITIAL_RETRY_DELAY * (2**attempt)
-                            logger.info(f"Retrying in {wait_time} seconds...")
-                            time.sleep(wait_time)
+                    # Exponential backoff for retries
+                    if attempt < self.MAX_RETRIES - 1:
+                        wait_time = self.INITIAL_RETRY_DELAY * (2**attempt)
+                        logger.info(f"Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
 
             except requests.exceptions.RequestException as e:
                 logger.error(f"Network error: {str(e)}")
@@ -323,13 +320,13 @@ class OpenAITranscriber(BaseTranscriber):
         super().__init__(callback, "OPENAI_API_KEY", model)
 
     def make_api_request(
-        self, temp_filename: str, language: str | None = None
+        self, audio_data: io.BytesIO, language: str | None = None
     ) -> tuple[bool, dict | str]:
         """
         Make API request to OpenAI with retry mechanism.
 
         Args:
-            temp_filename: Path to temporary WAV file
+            audio_data: BytesIO object containing audio WAV data
             language: Optional language code for transcription
 
         Returns:
@@ -340,86 +337,78 @@ class OpenAITranscriber(BaseTranscriber):
 
         for attempt in range(self.MAX_RETRIES):
             try:
-                with open(temp_filename, "rb") as audio_file:
-                    # Get appropriate prompt
-                    prompt = self.get_prompt(language)
+                audio_data.seek(0)
+                # Get appropriate prompt
+                prompt = self.get_prompt(language)
 
-                    data = {
-                        "model": self.model,
-                        "prompt": prompt,
-                        "temperature": 0.0,
-                    }
+                data = {
+                    "model": self.model,
+                    "prompt": prompt,
+                    "temperature": 0.0,
+                }
 
-                    if language and isinstance(language, str):
-                        data["language"] = language
-                        logger.info(f"Using language: {language}")
+                if language and isinstance(language, str):
+                    data["language"] = language
+                    logger.info(f"Using language: {language}")
 
-                    # Stream the file directly without loading into memory
-                    files = {"file": (os.path.basename(temp_filename), audio_file)}
-                    response = requests.post(
-                        self.API_ENDPOINT,
-                        headers=headers,
-                        files=files,
-                        data=data,
-                        timeout=self.REQUEST_TIMEOUT,
-                    )
+                # Pass the BytesIO object directly
+                files = {"file": ("audio.wav", audio_data, "audio/wav")}
+                response = requests.post(
+                    self.API_ENDPOINT,
+                    headers=headers,
+                    files=files,
+                    data=data,
+                    timeout=self.REQUEST_TIMEOUT,
+                )
 
-                    # Handle successful response
-                    if response.status_code == 200:
-                        try:
-                            result = response.json()
-                            # Close the response to release resources
-                            response.close()
-                            return (True, result)
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Failed to decode JSON response: {str(e)}")
-                            # Close the response to release resources
-                            if response:
-                                response.close()
-                            continue
-
-                    # Handle rate limiting
-                    elif response.status_code == 429:
-                        retry_after = int(
-                            response.headers.get(
-                                "Retry-After", self.INITIAL_RETRY_DELAY
-                            )
-                        )
-                        logger.warning(
-                            f"Rate limited. Waiting {retry_after} seconds..."
-                        )
+                # Handle successful response
+                if response.status_code == 200:
+                    try:
+                        result = response.json()
                         # Close the response to release resources
                         response.close()
-                        time.sleep(retry_after)
+                        return (True, result)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to decode JSON response: {str(e)}")
+                        # Close the response to release resources
+                        if response:
+                            response.close()
                         continue
 
-                    # Handle other API errors
-                    else:
-                        error_msg = (
-                            f"API error: {response.status_code} - {response.text}"
-                        )
+                # Handle rate limiting
+                elif response.status_code == 429:
+                    retry_after = int(
+                        response.headers.get("Retry-After", self.INITIAL_RETRY_DELAY)
+                    )
+                    logger.warning(f"Rate limited. Waiting {retry_after} seconds...")
+                    # Close the response to release resources
+                    response.close()
+                    time.sleep(retry_after)
+                    continue
+
+                # Handle other API errors
+                else:
+                    error_msg = f"API error: {response.status_code} - {response.text}"
+                    logger.error(error_msg)
+
+                    # Close the response to release resources
+                    response.close()
+
+                    # Handle specific error cases
+                    if response.status_code == 401:
+                        error_msg = "Invalid API key - please check your OPENAI_API_KEY"
                         logger.error(error_msg)
+                        return (False, error_msg)
+                    elif response.status_code == 413:
+                        error_msg = "Audio file too large - must be less than 25MB"
+                        logger.error(error_msg)
+                        return (False, error_msg)
 
-                        # Close the response to release resources
-                        response.close()
-
-                        # Handle specific error cases
-                        if response.status_code == 401:
-                            error_msg = (
-                                "Invalid API key - please check your OPENAI_API_KEY"
-                            )
-                            logger.error(error_msg)
-                            return (False, error_msg)
-                        elif response.status_code == 413:
-                            error_msg = "Audio file too large - must be less than 25MB"
-                            logger.error(error_msg)
-                            return (False, error_msg)
-
-                        # Exponential backoff for retries
-                        if attempt < self.MAX_RETRIES - 1:
-                            wait_time = self.INITIAL_RETRY_DELAY * (2**attempt)
-                            logger.info(f"Retrying in {wait_time} seconds...")
-                            time.sleep(wait_time)
+                    # Exponential backoff for retries
+                    if attempt < self.MAX_RETRIES - 1:
+                        wait_time = self.INITIAL_RETRY_DELAY * (2**attempt)
+                        logger.info(f"Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
 
             except requests.exceptions.RequestException as e:
                 logger.error(f"Network error: {str(e)}")

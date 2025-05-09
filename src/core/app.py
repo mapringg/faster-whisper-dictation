@@ -119,15 +119,15 @@ class App:
 
     def _on_enter_transcribing(self, event):
         """Handle entering TRANSCRIBING state."""
-        # Check if we have a valid audio file
-        audio_filename = (
-            event.kwargs.get("audio_filename") if hasattr(event, "kwargs") else None
+        # Check if we have valid audio data (BytesIO object)
+        audio_data = (
+            event.kwargs.get("audio_data") if hasattr(event, "kwargs") else None
         )
 
-        if audio_filename is None:
-            # Handle the case where recording failed
+        if audio_data is None or audio_data.getbuffer().nbytes == 0:
+            # Handle the case where recording failed or produced no data
             logger.error(
-                "No audio file available for transcription - recording may have failed"
+                "No audio data available for transcription - recording may have failed or was empty"
             )
             with self.status_icon_lock:
                 self.status_icon.update_state(StatusIconState.ERROR)
@@ -137,7 +137,7 @@ class App:
             self.m.to_READY()
             return
 
-        # Start the actual transcription
+        # Start the actual transcription, passing the event which now contains audio_data
         self._safe_start_transcription(event)
 
     def _on_enter_replaying(self, event):
@@ -250,7 +250,8 @@ class App:
                 logger.info("Transcribing audio...")
                 self.status_icon.update_state(StatusIconState.TRANSCRIBING)
 
-            # Then start transcription (which will trigger state transition when done)
+            # The event already contains audio_data and language.
+            # The transcriber.transcribe method is designed to pick these up from event.kwargs
             self.transcriber.transcribe(event)
         except Exception as e:
             logger.error(f"Error starting transcription: {str(e)}")

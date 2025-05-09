@@ -1,6 +1,5 @@
+import io
 import logging
-import os
-import tempfile
 import threading
 from contextlib import contextmanager
 
@@ -8,7 +7,7 @@ import numpy as np
 import sounddevice as sd
 import soundfile as sf
 
-from ..core.utils import get_default_devices, refresh_devices
+from ..core.utils import get_default_devices
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +81,8 @@ class Recorder:
         self.recording = False
         self.stream = None
         self.lock = threading.Lock()  # Thread-safe state management
-        self.audio_file_writer = None
-        self.temp_filename = None
+        self.audio_buffer = None
+        self.accumulated_audio_data = []
 
         # Stream error tracking
         self.stream_error_count = 0
@@ -105,14 +104,10 @@ class Recorder:
         with self.lock:
             self.recording = False
             # Add debug info about the current state
-            if self.audio_file_writer is not None:
-                logger.info("Audio file writer exists when stopping recording")
+            if self.audio_buffer is not None:
+                logger.info("Audio buffer exists when stopping recording")
             else:
-                logger.warning("Audio file writer is None when stopping recording")
-            if self.temp_filename:
-                logger.info(f"Temporary file exists: {self.temp_filename}")
-            else:
-                logger.warning("No temporary filename when stopping recording")
+                logger.warning("Audio buffer is None when stopping recording")
         # Stream cleanup is handled by the context manager
 
     def _cleanup_previous_session(self) -> None:
@@ -127,25 +122,19 @@ class Recorder:
             finally:
                 self.stream = None
 
-        # Close any existing audio file writer
-        if self.audio_file_writer is not None:
+        # Close and reset any existing audio buffer
+        if self.audio_buffer is not None:
             try:
-                self.audio_file_writer.close()
-                logger.info(f"Closed previous audio file writer")
+                if isinstance(self.audio_buffer, io.BytesIO):
+                    self.audio_buffer.close()
+                logger.info("Closed previous audio buffer")
             except Exception as e:
-                logger.error(f"Error closing previous audio file writer: {str(e)}")
+                logger.error(f"Error closing previous audio buffer: {str(e)}")
             finally:
-                self.audio_file_writer = None
+                self.audio_buffer = None
 
-        # Delete any existing temporary file
-        if self.temp_filename is not None and os.path.exists(self.temp_filename):
-            try:
-                os.unlink(self.temp_filename)
-                logger.info(f"Deleted previous temporary file: {self.temp_filename}")
-            except Exception as e:
-                logger.error(f"Error deleting temporary file: {str(e)}")
-            finally:
-                self.temp_filename = None
+        # Clear accumulated data
+        self.accumulated_audio_data = []
 
     def _setup_audio_stream(self, input_device: int) -> sd.InputStream | None:
         """
@@ -191,11 +180,9 @@ class Recorder:
                         if self.stream_error_count > 0:
                             self.stream_error_count = 0
 
-            # Only write data if we're recording and the file writer exists
-            with (
-                self.lock
-            ):  # Use lock to ensure thread safety when checking audio_file_writer
-                if self.recording and self.audio_file_writer is not None:
+            # Only write data if we're recording
+            with self.lock:
+                if self.recording:
                     try:
                         # Check if we have valid audio data
                         if indata is not None and indata.size > 0:
@@ -206,15 +193,11 @@ class Recorder:
                                 )
                                 callback.first_data_logged = True
 
-                            self.audio_file_writer.write(indata)
+                            self.accumulated_audio_data.append(indata.copy())
                         else:
                             logger.warning("Received empty audio data in callback")
                     except Exception as e:
-                        logger.error(f"Error writing audio data to file: {str(e)}")
-                elif self.recording and self.audio_file_writer is None:
-                    logger.warning(
-                        "Audio file writer is None but recording is True - this should not happen"
-                    )
+                        logger.error(f"Error accumulating audio data: {str(e)}")
 
         try:
             # Get detailed device info to verify it's valid
@@ -253,206 +236,125 @@ class Recorder:
             return None
 
     def _cleanup_stream(self) -> None:
-        """Safely stop and close the audio stream."""
-        if self.stream is not None:
+        """Clean up the audio stream if it exists."""
+        if self.stream:
             try:
                 self.stream.stop()
                 self.stream.close()
+                logger.info("Audio stream stopped and closed.")
             except Exception as e:
-                logger.error(f"Error closing audio stream: {str(e)}")
+                logger.error(f"Error stopping or closing stream: {str(e)}")
             finally:
                 self.stream = None
 
     def _record_impl(self, language: str | None = None) -> None:
         """
-        Main recording implementation that handles audio capture.
+        Core recording logic executed in a separate thread.
+        Records audio from the specified input device until recording is stopped.
 
         Args:
-            language: Optional language code for transcription
+            language: Optional language hint (currently unused in recorder)
         """
+        input_device, _ = get_default_devices()
+        if input_device is None:
+            logger.error("No input device found. Cannot start recording.")
+            # Notify callback of failure
+            self.callback(audio_data=None, error="No input device")
+            return
+
+        # Reset stream error tracking for this recording session
+        with self.lock:
+            self.stream_error_count = 0
+            self.persistent_stream_error = False
+            self.accumulated_audio_data = []  # Ensure it's clear
+
+        samplerate = 16000  # Standard samplerate for transcription
+
         try:
-            # Refresh audio devices to detect any hardware changes
-            refresh_devices()
+            with self._recording_state(), self._stream_context(input_device) as stream:
+                if stream is None or self.persistent_stream_error:
+                    logger.error(
+                        "Failed to initialize or stream encountered persistent error."
+                    )
+                    self.callback(
+                        audio_data=None,
+                        error="Stream initialization failed or persistent error",
+                    )
+                    return
 
-            # Get and validate input device
-            input_device, _ = get_default_devices()
-            if input_device is None:
-                logger.error("No default input device available")
-                self.callback(audio_filename=None)
-                return
+                logger.info(
+                    f"Recording started. Samplerate: {samplerate}, Device: {input_device}"
+                )
 
-            # Use recording state context manager
-            with self._recording_state():
-                # Create a temporary file for audio data BEFORE starting the stream
+                # Loop to keep the recording active while self.recording is True
+                while True:
+                    with self.lock:
+                        if not self.recording or self.persistent_stream_error:
+                            break
+                    sd.sleep(
+                        100
+                    )  # Sleep briefly to avoid busy-waiting, stream callback handles data
+
+                logger.info("Recording loop finished.")
+
+            # Process and save the recorded audio
+            with self.lock:
+                if self.persistent_stream_error:
+                    logger.error(
+                        "Persistent stream error occurred. No audio will be processed."
+                    )
+                    self.callback(
+                        audio_data=None, error="Persistent audio stream error"
+                    )
+                    return
+
+                if not self.accumulated_audio_data:
+                    logger.warning("No audio data recorded.")
+                    self.callback(audio_data=None, error="No audio data recorded")
+                    return
+
+                logger.info(
+                    f"Processing {len(self.accumulated_audio_data)} accumulated audio chunks."
+                )
+                # Concatenate all recorded numpy arrays
+                full_audio_np = np.concatenate(self.accumulated_audio_data)
+                self.accumulated_audio_data = []  # Clear after concatenating
+
+                # Create a BytesIO buffer to hold the WAV data
+                self.audio_buffer = io.BytesIO()
                 try:
-                    # Choose file format based on the default transcriber (WAV is more compatible)
-                    suffix = ".wav"
-                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-                    self.temp_filename = temp_file.name
-                    temp_file.close()  # Close the file so soundfile can open it
-
-                    # Open the file for writing with soundfile
-                    self.audio_file_writer = sf.SoundFile(
-                        self.temp_filename,
-                        mode="w",
-                        samplerate=16000,
-                        channels=1,
+                    # Write the numpy array to the BytesIO buffer as a WAV file
+                    sf.write(
+                        self.audio_buffer,
+                        full_audio_np,
+                        samplerate,
                         format="WAV",
                         subtype="PCM_16",
                     )
-                    logger.info(f"Created temporary audio file: {self.temp_filename}")
-                except Exception as e:
-                    logger.error(f"Failed to create temporary audio file: {str(e)}")
-                    if self.temp_filename and os.path.exists(self.temp_filename):
-                        try:
-                            os.unlink(self.temp_filename)
-                        except Exception as ex:
-                            logger.error(f"Error deleting temporary file: {str(ex)}")
-                    self.temp_filename = None
-                    self.callback(audio_filename=None)
-                    return
-
-                # Now start the stream after the file is ready
-                with self._stream_context(input_device) as stream:
-                    if stream is None:
-                        # Clean up the file if stream setup fails
-                        if self.audio_file_writer:
-                            self.audio_file_writer.close()
-                            self.audio_file_writer = None
-                        if self.temp_filename and os.path.exists(self.temp_filename):
-                            try:
-                                os.unlink(self.temp_filename)
-                                self.temp_filename = None
-                            except Exception as e:
-                                logger.error(f"Error deleting temporary file: {str(e)}")
-                        self.callback(audio_filename=None)
-                        return
-
-                    # Main recording loop
-                    while self.recording:
-                        sd.sleep(100)  # Sleep to prevent busy-waiting
-
-            # After the stream context exits (stream is stopped and closed)
-            with self.lock:
-                # Check for persistent stream errors first
-                if self.persistent_stream_error:
-                    logger.critical(
-                        "Recording failed due to persistent audio device errors"
+                    self.audio_buffer.seek(
+                        0
+                    )  # Reset buffer position to the beginning for reading
+                    logger.info(
+                        f"Audio data written to in-memory WAV buffer (size: {self.audio_buffer.getbuffer().nbytes} bytes)."
                     )
+                    # Pass the BytesIO object to the callback
+                    self.callback(audio_data=self.audio_buffer, language=language)
+                except Exception as e:
+                    logger.error(f"Error writing WAV data to memory buffer: {str(e)}")
+                    self.callback(
+                        audio_data=None, error=f"Failed to create WAV in memory: {e}"
+                    )
+                    if self.audio_buffer:
+                        self.audio_buffer.close()
+                    self.audio_buffer = None
 
-                    # Clean up resources
-                    if self.audio_file_writer:
-                        try:
-                            self.audio_file_writer.close()
-                        except Exception as e:
-                            logger.error(
-                                f"Error closing audio file after stream error: {str(e)}"
-                            )
-                        finally:
-                            self.audio_file_writer = None
-
-                    if self.temp_filename and os.path.exists(self.temp_filename):
-                        try:
-                            os.unlink(self.temp_filename)
-                            logger.info(
-                                f"Deleted audio file after stream error: {self.temp_filename}"
-                            )
-                        except Exception as e:
-                            logger.error(f"Error deleting temporary file: {str(e)}")
-
-                    # Reset error tracking
-                    self.persistent_stream_error = False
-                    self.stream_error_count = 0
-                    self.temp_filename = None
-
-                    # Signal error to the callback
-                    self.callback(audio_filename=None)
-                    return
-
-                # Close the audio file writer
-                if self.audio_file_writer:
-                    try:
-                        self.audio_file_writer.close()
-                        logger.info(
-                            f"Closed temporary audio file: {self.temp_filename}"
-                        )
-                    except Exception as e:
-                        logger.error(f"Error closing audio file: {str(e)}")
-                    finally:
-                        self.audio_file_writer = None
-
-                # Reset error tracking
-                self.stream_error_count = 0
-
-                # Check if recording was successful (file exists and has non-zero size)
-                if self.temp_filename and os.path.exists(self.temp_filename):
-                    file_size = os.path.getsize(self.temp_filename)
-                    logger.info(f"Temporary file size: {file_size} bytes")
-
-                    if (
-                        file_size > 44
-                    ):  # WAV header is 44 bytes, so we need more than that for actual audio content
-                        logger.info(
-                            f"Recording successful, saved to: {self.temp_filename}"
-                        )
-                        # Pass the filename to the callback instead of audio data
-                        temp_filename_to_pass = self.temp_filename
-                        self.temp_filename = None  # Transfer ownership to the callback
-                        self.callback(
-                            audio_filename=temp_filename_to_pass, language=language
-                        )
-                    else:
-                        logger.warning(
-                            f"No valid audio data in file (size: {file_size} bytes)"
-                        )
-                        # Clean up the file if it exists but is invalid/empty
-                        try:
-                            os.unlink(self.temp_filename)
-                            logger.info(
-                                f"Deleted empty audio file: {self.temp_filename}"
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"Error deleting invalid temporary file: {str(e)}"
-                            )
-                        self.temp_filename = None
-                        self.callback(audio_filename=None)
-                else:
-                    logger.warning("No valid audio file created during recording")
-                    self.temp_filename = None
-                    self.callback(audio_filename=None)
-
-        except sd.PortAudioError as e:
-            logger.error(f"Audio device error during recording: {str(e)}")
-            # Clean up resources
-            with self.lock:
-                if self.audio_file_writer:
-                    try:
-                        self.audio_file_writer.close()
-                    except:
-                        pass
-                    self.audio_file_writer = None
-                if self.temp_filename and os.path.exists(self.temp_filename):
-                    try:
-                        os.unlink(self.temp_filename)
-                    except:
-                        pass
-                    self.temp_filename = None
-            self.callback(audio_filename=None)
         except Exception as e:
-            logger.error(f"Unexpected error during recording: {str(e)}")
-            # Clean up resources
+            logger.error(f"An error occurred during recording: {str(e)}")
+            self.callback(audio_data=None, error=f"Recording error: {e}")
+        finally:
+            logger.info("Recording implementation finished.")
+            # Ensure accumulated data is cleared if an exception occurred before processing
             with self.lock:
-                if self.audio_file_writer:
-                    try:
-                        self.audio_file_writer.close()
-                    except:
-                        pass
-                    self.audio_file_writer = None
-                if self.temp_filename and os.path.exists(self.temp_filename):
-                    try:
-                        os.unlink(self.temp_filename)
-                    except:
-                        pass
-                    self.temp_filename = None
-            self.callback(audio_filename=None)
+                self.accumulated_audio_data = []
+            # Cleanup of the stream is handled by _stream_context
+            # Cleanup of the audio_buffer (if created) happens when it's used or in _cleanup_previous_session
