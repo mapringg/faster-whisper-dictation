@@ -116,7 +116,6 @@ class KeyboardReplayer:
         """
         logger.info("Starting text replay...")
         segments = event.kwargs.get("segments", [])
-        text_buffer: list[str] = []
 
         # Validate input segments
         if not self._validate_segments(segments):
@@ -127,6 +126,24 @@ class KeyboardReplayer:
         try:
             if platform.system() == "Darwin":  # macOS specific logic
                 logger.info("macOS detected, using pbcopy for clipboard output.")
+                original_clipboard_content = ""
+                try:
+                    result = subprocess.run(
+                        ["pbpaste"], capture_output=True, text=True, check=False
+                    )
+                    if result.returncode == 0:
+                        original_clipboard_content = result.stdout
+                    else:
+                        logger.warning(
+                            f"Failed to get current clipboard content using pbpaste: {result.stderr}"
+                        )
+                except FileNotFoundError:
+                    logger.warning(
+                        "pbpaste command not found. Cannot save original clipboard content."
+                    )
+                except Exception as e:
+                    logger.warning(f"Error getting clipboard content with pbpaste: {e}")
+
                 full_text = ""
                 is_first_char_overall = True
                 for segment in segments:
@@ -164,6 +181,28 @@ class KeyboardReplayer:
                         except Exception as paste_err:
                             logger.error(f"Error simulating paste: {paste_err}")
 
+                        if original_clipboard_content:
+                            try:
+                                subprocess.run(
+                                    ["pbcopy"],
+                                    input=original_clipboard_content,
+                                    text=True,
+                                    check=True,
+                                )
+                                logger.info("Original clipboard content restored.")
+                            except subprocess.CalledProcessError as e:
+                                logger.error(
+                                    f"Failed to restore original clipboard content using pbcopy: {e.stderr}"
+                                )
+                            except FileNotFoundError:
+                                logger.error(
+                                    "pbcopy command not found. Cannot restore original clipboard content."
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Error restoring clipboard content with pbcopy: {e}"
+                                )
+
                     except subprocess.CalledProcessError as e:
                         logger.error(
                             f"Failed to copy text to clipboard using pbcopy: {e}"
@@ -181,7 +220,41 @@ class KeyboardReplayer:
                     logger.warning("No text generated to copy to clipboard.")
 
             else:  # Linux specific logic (using xclip + paste)
-                logger.info("Linux detected, using xclip and paste simulation.")
+                logger.info("Linux detected, using xsel/xclip and paste simulation.")
+                original_clipboard_content = ""
+                try:
+                    # Try with xsel first
+                    result = subprocess.run(
+                        ["xsel", "--clipboard", "--output"],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    if result.returncode == 0:
+                        original_clipboard_content = result.stdout
+                    else:  # Fallback to xclip if xsel failed or isn't outputting
+                        logger.warning(
+                            f"xsel --output failed (stderr: {result.stderr}). Trying xclip."
+                        )
+                        result_xclip = subprocess.run(
+                            ["xclip", "-o", "-selection", "clipboard"],
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                        if result_xclip.returncode == 0:
+                            original_clipboard_content = result_xclip.stdout
+                        else:
+                            logger.warning(
+                                f"Failed to get current clipboard content using xclip: {result_xclip.stderr}"
+                            )
+                except FileNotFoundError:
+                    logger.warning(
+                        "Neither xsel nor xclip command found. Cannot save original clipboard content."
+                    )
+                except Exception as e:
+                    logger.warning(f"Error getting clipboard content: {e}")
+
                 full_text = ""
                 is_first_char_overall = True
                 for segment in segments:
@@ -244,6 +317,50 @@ class KeyboardReplayer:
                             logger.error(
                                 f"Error simulating paste (Ctrl+V): {paste_err}"
                             )
+
+                        if original_clipboard_content:
+                            try:
+                                # Try with xsel first
+                                restore_proc = subprocess.Popen(
+                                    ["xsel", "--clipboard", "--input"],
+                                    stdin=subprocess.PIPE,
+                                    text=True,
+                                )
+                                _, stderr = restore_proc.communicate(
+                                    input=original_clipboard_content
+                                )
+                                if restore_proc.returncode == 0:
+                                    logger.info(
+                                        "Original clipboard content restored using xsel."
+                                    )
+                                else:
+                                    logger.warning(
+                                        f"xsel --input failed to restore (stderr: {stderr}). Trying xclip."
+                                    )
+                                    # Fallback to xclip
+                                    restore_proc_xclip = subprocess.Popen(
+                                        ["xclip", "-i", "-selection", "clipboard"],
+                                        stdin=subprocess.PIPE,
+                                        text=True,
+                                    )
+                                    _, stderr_xclip = restore_proc_xclip.communicate(
+                                        input=original_clipboard_content
+                                    )
+                                    if restore_proc_xclip.returncode == 0:
+                                        logger.info(
+                                            "Original clipboard content restored using xclip."
+                                        )
+                                    else:
+                                        logger.error(
+                                            f"Failed to restore original clipboard content using xclip. Stderr: {stderr_xclip}"
+                                        )
+
+                            except FileNotFoundError:
+                                logger.error(
+                                    "Neither xsel nor xclip command found. Cannot restore original clipboard content."
+                                )
+                            except Exception as e:
+                                logger.error(f"Error restoring clipboard content: {e}")
 
                     except subprocess.CalledProcessError as e:
                         logger.error(
