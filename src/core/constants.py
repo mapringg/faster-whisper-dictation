@@ -3,8 +3,8 @@ OPENAI_API_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions"
 GROQ_API_ENDPOINT = "https://api.groq.com/openai/v1/audio/transcriptions"
 
 # Default API Models
-DEFAULT_OPENAI_MODEL = "gpt-4o-transcribe"
-DEFAULT_GROQ_MODEL = "whisper-large-v3"
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini-transcribe"
+DEFAULT_GROQ_MODEL = "whisper-large-v3-turbo"
 
 # API Request Config
 API_MAX_RETRIES = 3
