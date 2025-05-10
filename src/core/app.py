@@ -26,7 +26,10 @@ class App:
     """Main application class that manages the dictation workflow."""
 
     # Class constants
-    TRANSCRIBER_MODELS = {"openai": "gpt-4o-transcribe", "groq": "whisper-large-v3"}
+    TRANSCRIBER_MODELS = {
+        "openai": const.DEFAULT_OPENAI_MODEL,
+        "groq": const.DEFAULT_GROQ_MODEL,
+    }
 
     def __init__(self, args):
         """

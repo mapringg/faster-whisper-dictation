@@ -177,13 +177,13 @@ class GroqTranscriber(BaseTranscriber):
     # Groq-specific configuration
     API_ENDPOINT = const.GROQ_API_ENDPOINT
 
-    def __init__(self, callback: Callable, model: str = "whisper-large-v3"):
+    def __init__(self, callback: Callable, model: str = const.DEFAULT_GROQ_MODEL):
         """
         Initialize the Groq transcriber.
 
         Args:
             callback: Function to call with transcription results
-            model: Name of the Groq model to use (default: whisper-large-v3)
+            model: Name of the Groq model to use (default: DEFAULT_GROQ_MODEL)
         """
         super().__init__(callback, "GROQ_API_KEY", model)
 
@@ -309,13 +309,13 @@ class OpenAITranscriber(BaseTranscriber):
     # OpenAI-specific configuration
     API_ENDPOINT = const.OPENAI_API_ENDPOINT
 
-    def __init__(self, callback: Callable, model: str = "gpt-4o-transcribe"):
+    def __init__(self, callback: Callable, model: str = const.DEFAULT_OPENAI_MODEL):
         """
         Initialize the OpenAI transcriber.
 
         Args:
             callback: Function to call with transcription results
-            model: Name of the OpenAI model to use (default: gpt-4o-transcribe)
+            model: Name of the OpenAI model to use (default: DEFAULT_OPENAI_MODEL)
         """
         super().__init__(callback, "OPENAI_API_KEY", model)
 
