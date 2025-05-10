@@ -1,6 +1,8 @@
 import argparse
 import platform
 
+from src.core import constants as const
+
 
 def parse_args():
     # Set default trigger key based on platform
@@ -18,11 +20,11 @@ def parse_args():
         "-m",
         "--model-name",
         type=str,
-        default="gpt-4o-transcribe",
+        default=const.DEFAULT_OPENAI_MODEL,
         help="""\
 Model to use for transcription.
-For OpenAI: gpt-4o-transcribe
-For Groq: whisper-large-v3""",
+For OpenAI: {const.DEFAULT_OPENAI_MODEL}
+For Groq: {const.DEFAULT_GROQ_MODEL}""",
     )
     parser.add_argument(
         "--transcriber",
