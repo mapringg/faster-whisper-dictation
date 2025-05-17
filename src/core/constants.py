@@ -37,6 +37,13 @@ SOUND_PATH_START = "assets/107786__leviclaassen__beepbeep.wav"
 SOUND_PATH_FINISH = "assets/559318__alejo902__sonido-3-regulator.wav"
 SOUND_PATH_CANCEL = "assets/160909__racche__scratch-speed.wav"
 
+# Faster Whisper Config
+DEFAULT_FAST_WHISPER_MODEL = "small.en"
+DEFAULT_FAST_WHISPER_DEVICE = "cpu"
+DEFAULT_FAST_WHISPER_COMPUTE_TYPE = "auto"
+DEFAULT_FAST_WHISPER_BATCH_SIZE = 4
+DEFAULT_FAST_WHISPER_WORD_TIMESTAMPS = True
+
 # Other constants
 DEFAULT_LANGUAGE = "en"
 DEFAULT_TRANSCRIBER = "openai"

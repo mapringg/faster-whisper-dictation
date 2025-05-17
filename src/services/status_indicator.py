@@ -54,6 +54,7 @@ class StatusIcon:
         self._transcribers = {
             "openai": "OpenAI",
             "groq": "Groq",
+            "faster-whisper": "Faster Whisper",
         }
         self._state_colors = {
             StatusIconState.READY: (0, 150, 0),  # Green
@@ -172,6 +173,11 @@ class StatusIcon:
         self._select_transcriber("groq")
         return False  # Don't close the menu
 
+    def _select_faster_whisper(self):
+        """Select Faster Whisper transcriber."""
+        self._select_transcriber("faster-whisper")
+        return False  # Don't close the menu
+
     def _select_language(self, language_code):
         """Handle language selection from the menu."""
         if self._language_callback and language_code != self._current_language:
@@ -215,6 +221,12 @@ class StatusIcon:
             MenuItem(
                 f"{('✓' if self._current_transcriber == 'groq' else '   ')} Groq",
                 self._select_groq,
+            )
+        )
+        menu_items.append(
+            MenuItem(
+                f"{('✓' if self._current_transcriber == 'faster-whisper' else '   ')} Faster Whisper",
+                self._select_faster_whisper,
             )
         )
 
@@ -348,7 +360,6 @@ class StatusIcon:
             elif system == "Darwin":
                 try:
                     # Use AppKit timer for macOS
-                    import AppKit
                     import Foundation
 
                     # Create a timer to process the queue

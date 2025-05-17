@@ -15,7 +15,11 @@ from ..services.status_indicator import (
     StatusIconState,
     run_icon_on_main_thread,
 )
-from ..services.transcriber import GroqTranscriber, OpenAITranscriber
+from ..services.transcriber import (
+    FasterWhisperTranscriber,
+    GroqTranscriber,
+    OpenAITranscriber,
+)
 from . import constants as const
 from .state_machine import create_state_machine
 
@@ -29,6 +33,7 @@ class App:
     TRANSCRIBER_MODELS = {
         "openai": const.DEFAULT_OPENAI_MODEL,
         "groq": const.DEFAULT_GROQ_MODEL,
+        "faster-whisper": const.DEFAULT_FAST_WHISPER_MODEL,
     }
 
     def __init__(self, args):
@@ -67,14 +72,7 @@ class App:
         self.recorder = Recorder(self.m.finish_recording)
 
         # Initialize the appropriate transcriber based on the argument
-        if args.transcriber == "openai":
-            self.transcriber = OpenAITranscriber(
-                self.m.finish_transcribing, args.model_name
-            )
-        else:  # groq
-            self.transcriber = GroqTranscriber(
-                self.m.finish_transcribing, args.model_name
-            )
+        self.transcriber = self._build_transcriber(args.transcriber, args.model_name)
 
         self.replayer = KeyboardReplayer(self.m.finish_replaying)
 
@@ -101,6 +99,25 @@ class App:
         # Add error sound (using cancel sound as fallback)
         if "cancel_recording" in self.SOUND_EFFECTS:
             self.SOUND_EFFECTS["error_sound"] = self.SOUND_EFFECTS["cancel_recording"]
+
+    def _build_transcriber(self, kind: str, model_name: str):
+        """Helper method to build and return a transcriber instance."""
+        if kind == "openai":
+            return OpenAITranscriber(self.m.finish_transcribing, model_name)
+        if kind == "groq":
+            return GroqTranscriber(self.m.finish_transcribing, model_name)
+        if kind == "faster-whisper":
+            try:
+                return FasterWhisperTranscriber(self.m.finish_transcribing, model_name)
+            except ImportError as err:
+                logger.warning(
+                    f"Faster-Whisper unavailable – falling back to OpenAI: {err}"
+                )
+                # Fallback to OpenAI if faster-whisper is not available
+                return OpenAITranscriber(self.m.finish_transcribing, model_name)
+        # Default to OpenAI if unknown
+        logger.warning(f"Unknown transcriber kind: {kind}. Defaulting to OpenAI.")
+        return OpenAITranscriber(self.m.finish_transcribing, model_name)
 
     def _on_enter_ready(self, *_):
         """Callback that runs when entering READY state."""
@@ -196,15 +213,7 @@ class App:
 
             with self.config_lock:
                 # Create new transcriber instance with appropriate model name
-                if transcriber_id == "openai":
-                    self.transcriber = OpenAITranscriber(
-                        self.m.finish_transcribing, model_name
-                    )
-                else:  # groq
-                    self.transcriber = GroqTranscriber(
-                        self.m.finish_transcribing, model_name
-                    )
-
+                self.transcriber = self._build_transcriber(transcriber_id, model_name)
                 # Update the stored model name
                 self.args.model_name = model_name
                 self.args.transcriber = transcriber_id

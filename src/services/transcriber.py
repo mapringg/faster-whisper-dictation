@@ -8,12 +8,26 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import requests
+import soundfile as sf
 
 from ..core import constants as const
 from ..core.utils import load_env_from_file
 
 logger = logging.getLogger(__name__)
+
+# Import faster-whisper only when needed to avoid dependency issues
+# if the library is not installed
+try:
+    from faster_whisper import WhisperModel
+
+    FASTER_WHISPER_AVAILABLE = True
+except ImportError:
+    FASTER_WHISPER_AVAILABLE = False
+    logger.warning(
+        "faster-whisper not installed. FasterWhisperTranscriber will not be available."
+    )
 
 
 # Define Segment class at module level
@@ -431,3 +445,168 @@ class OpenAITranscriber(BaseTranscriber):
                 gc.collect()
 
         return (False, "Max retries exceeded for server/network error")
+
+
+class FasterWhisperTranscriber(BaseTranscriber):
+    """Handles audio transcription using the Faster Whisper library locally."""
+
+    def __init__(
+        self,
+        callback: Callable,
+        model: str = const.DEFAULT_FAST_WHISPER_MODEL,
+        device: str = const.DEFAULT_FAST_WHISPER_DEVICE,
+        compute_type: str = const.DEFAULT_FAST_WHISPER_COMPUTE_TYPE,
+        batch_size: int = const.DEFAULT_FAST_WHISPER_BATCH_SIZE,
+        word_timestamps: bool = const.DEFAULT_FAST_WHISPER_WORD_TIMESTAMPS,
+    ):
+        """
+        Initialize the Faster Whisper transcriber.
+
+        Args:
+            callback: Function to call with transcription results
+            model: Name of the Whisper model to use (default: DEFAULT_FAST_WHISPER_MODEL)
+            device: Device to use for inference (default: DEFAULT_FAST_WHISPER_DEVICE)
+            compute_type: Compute type for inference (default: DEFAULT_FAST_WHISPER_COMPUTE_TYPE)
+            batch_size: Batch size for inference (default: DEFAULT_FAST_WHISPER_BATCH_SIZE)
+            word_timestamps: Whether to include word-level timestamps (default: DEFAULT_FAST_WHISPER_WORD_TIMESTAMPS)
+        """
+        # Faster-Whisper is local; fake an API key *before* BaseTranscriber validates it
+        import os
+
+        os.environ.setdefault("DUMMY_ENV_VAR", "dummy_key")
+
+        super().__init__(callback, "DUMMY_ENV_VAR", model)  # ← no ValueError now
+
+        # Store the Faster Whisper specific parameters
+        self.device = device
+        self.compute_type = compute_type
+        self.batch_size = batch_size
+        self.word_timestamps = word_timestamps
+
+        # Initialize the model lazily (on first use) to avoid loading it during initialization
+        self._whisper_model = None
+
+        if not FASTER_WHISPER_AVAILABLE:
+            raise ImportError(
+                "The faster-whisper library is not installed. "
+                "Please install it with 'pip install faster-whisper'."
+            )
+
+        logger.info(
+            f"Initialized FasterWhisperTranscriber with model={model}, "
+            f"device={device}, compute_type={compute_type}, "
+            f"batch_size={batch_size}, word_timestamps={word_timestamps}"
+        )
+
+    def _get_model(self):
+        """
+        Lazily initialize and return the Whisper model.
+
+        Returns:
+            WhisperModel: The initialized Whisper model
+        """
+        if self._whisper_model is None:
+            logger.info(
+                f"Loading Whisper model {self.model} on {self.device} "
+                f"with compute_type={self.compute_type}"
+            )
+            try:
+                self._whisper_model = WhisperModel(
+                    self.model,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                )
+                logger.info("Whisper model loaded successfully")
+            except Exception as e:
+                logger.error(f"Error loading Whisper model: {str(e)}")
+                raise
+
+        return self._whisper_model
+
+    def make_api_request(
+        self, audio_data: io.BytesIO, language: str | None = None
+    ) -> tuple[bool, dict | str]:
+        """
+        Transcribe audio using the Faster Whisper model.
+
+        Args:
+            audio_data: BytesIO object containing audio WAV data
+            language: Optional language code for transcription
+
+        Returns:
+            tuple: (success: bool, result_or_error: dict|str)
+                   On success: (True, {"text": transcribed_text})
+                   On failure: (False, error_message)
+        """
+
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                # Reset the audio data pointer to the beginning
+                audio_data.seek(0)
+
+                # Load audio data from BytesIO
+                try:
+                    # Use soundfile to read the audio data from the BytesIO object
+                    audio_array, sample_rate = sf.read(audio_data)
+
+                    # Convert to mono if stereo
+                    if audio_array.ndim == 2 and audio_array.shape[1] > 1:
+                        audio_array = audio_array.mean(axis=1)
+
+                    # Ensure dtype is float32 as expected by faster-whisper
+                    audio_array = audio_array.astype(np.float32, copy=False)
+
+                    logger.info(
+                        f"Audio loaded: {audio_array.shape}, sample rate: {sample_rate}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error loading audio data: {str(e)}")
+                    return (False, f"Error loading audio data: {str(e)}")
+
+                # Get the Whisper model
+                model = self._get_model()
+
+                # Set language if provided
+                transcribe_options = {
+                    "word_timestamps": self.word_timestamps,
+                }
+
+                if language and isinstance(language, str):
+                    transcribe_options["language"] = language
+                    logger.info(f"Using language: {language}")
+
+                # Transcribe the audio
+                logger.info("Starting transcription with Faster Whisper")
+                segments, info = model.transcribe(audio_array, **transcribe_options)
+
+                # Collect all segment texts
+                all_text = ""
+                for segment in segments:
+                    all_text += segment.text + " "
+
+                all_text = all_text.strip()
+
+                if not all_text:
+                    logger.warning("Received empty transcription from Faster Whisper")
+
+                logger.info(f"Transcription successful: {len(all_text)} characters")
+
+                # Return the transcription result
+                return (True, {"text": all_text})
+
+            except Exception as e:
+                logger.error(f"Error during transcription: {str(e)}")
+
+                if attempt < self.MAX_RETRIES - 1:
+                    wait_time = self.INITIAL_RETRY_DELAY * (2**attempt)
+                    logger.info(f"Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+
+                    # Force garbage collection
+                    import gc
+
+                    gc.collect()
+                else:
+                    return (False, f"Error during transcription: {str(e)}")
+
+        return (False, "Max retries exceeded")
