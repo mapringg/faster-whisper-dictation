@@ -16,7 +16,11 @@ from ..services.status_indicator import (
     StatusIconState,
     run_icon_on_main_thread,
 )
-from ..services.transcriber import GroqTranscriber, OpenAITranscriber
+from ..services.transcriber import (  # Added LocalTranscriber
+    GroqTranscriber,
+    LocalTranscriber,
+    OpenAITranscriber,
+)
 from . import constants as const
 from .state_machine import create_state_machine
 
@@ -30,6 +34,7 @@ class App:
     TRANSCRIBER_MODELS = {
         "openai": const.DEFAULT_OPENAI_MODEL,
         "groq": const.DEFAULT_GROQ_MODEL,
+        "local": const.DEFAULT_LOCAL_MODEL,  # Added local transcriber
     }
 
     def __init__(self, args):
@@ -83,6 +88,10 @@ class App:
         # Initialize the appropriate transcriber based on the argument
         if args.transcriber == "openai":
             self.transcriber = OpenAITranscriber(
+                self.m.finish_transcribing, args.model_name
+            )
+        elif args.transcriber == "local":  # Added local transcriber initialization
+            self.transcriber = LocalTranscriber(
                 self.m.finish_transcribing, args.model_name
             )
         else:  # groq
@@ -224,9 +233,28 @@ class App:
                 return
 
             with self.config_lock:
+                # Close existing transcriber if it has a close method
+                if hasattr(self.transcriber, "close"):
+                    if asyncio.iscoroutinefunction(self.transcriber.close):
+                        logger.info(
+                            f"Closing existing async transcriber: {self.transcriber.__class__.__name__}"
+                        )
+                        asyncio.run_coroutine_threadsafe(
+                            self.transcriber.close(), self.async_loop
+                        )
+                    else:
+                        logger.info(
+                            f"Closing existing sync transcriber: {self.transcriber.__class__.__name__}"
+                        )
+                        self.transcriber.close()
+
                 # Create new transcriber instance with appropriate model name
                 if transcriber_id == "openai":
                     self.transcriber = OpenAITranscriber(
+                        self.m.finish_transcribing, model_name
+                    )
+                elif transcriber_id == "local":  # Added local transcriber instantiation
+                    self.transcriber = LocalTranscriber(
                         self.m.finish_transcribing, model_name
                     )
                 else:  # groq

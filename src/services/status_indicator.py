@@ -1,3 +1,4 @@
+import importlib.util  # Import importlib.util
 import logging
 import platform
 import queue
@@ -54,6 +55,7 @@ class StatusIcon:
         self._transcribers = {
             "openai": "OpenAI",
             "groq": "Groq",
+            "local": "Local",  # Added local transcriber option
         }
         self._state_colors = {
             StatusIconState.READY: (0, 150, 0),  # Green
@@ -190,6 +192,11 @@ class StatusIcon:
             self.update_queue.put({"action": "update_menu"})
         return False  # Don't close the menu
 
+    def _select_local_transcriber(self):
+        """Select Local transcriber."""
+        self._select_transcriber("local")
+        return False  # Don't close the menu
+
     def _add_transcriber_menu_items(self, menu_items: list):
         """Add transcriber selection items to the menu."""
         if not self._transcriber_callback:
@@ -215,6 +222,12 @@ class StatusIcon:
             MenuItem(
                 f"{('✓' if self._current_transcriber == 'groq' else '   ')} Groq",
                 self._select_groq,
+            )
+        )
+        menu_items.append(  # Added local transcriber menu item
+            MenuItem(
+                f"{('✓' if self._current_transcriber == 'local' else '   ')} Local",
+                self._select_local_transcriber,
             )
         )
 
@@ -346,25 +359,30 @@ class StatusIcon:
                         "GLib not available, using fallback for queue processing"
                     )
             elif system == "Darwin":
-                try:
-                    # Use AppKit timer for macOS
-                    import AppKit
-                    import Foundation
+                # Check if AppKit is available before attempting to import
+                if importlib.util.find_spec("AppKit"):
+                    try:
+                        # Use AppKit timer for macOS
+                        import Foundation
 
-                    # Create a timer to process the queue
-                    self._timer = Foundation.NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-                        0.1,  # 100ms interval
-                        self._icon,  # Target object
-                        "processQueue:",  # Selector name
-                        None,  # User info
-                        True,  # Repeats
-                    )
-                    # Add method to icon instance dynamically (Python allows this)
-                    self._icon.processQueue_ = lambda sender: self._process_queue()
-                    logger.info("Using AppKit timer for queue processing")
-                except ImportError:
+                        # Create a timer to process the queue
+                        self._timer = Foundation.NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                            0.1,  # 100ms interval
+                            self._icon,  # Target object
+                            "processQueue:",  # Selector name
+                            None,  # User info
+                            True,  # Repeats
+                        )
+                        # Add method to icon instance dynamically (Python allows this)
+                        self._icon.processQueue_ = lambda sender: self._process_queue()
+                        logger.info("Using AppKit timer for queue processing")
+                    except ImportError:
+                        logger.warning(
+                            "AppKit not available, using fallback for queue processing"
+                        )
+                else:
                     logger.warning(
-                        "AppKit not available, using fallback for queue processing"
+                        "AppKit not found, using generic queue processing for macOS"
                     )
             else:
                 # For Windows or other platforms

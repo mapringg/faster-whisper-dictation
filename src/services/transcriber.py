@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp  # Added
+import numpy as np  # Added
+import soundfile  # Added
+from faster_whisper import WhisperModel  # Added
 
 # import requests # Removed
 from ..core import constants as const
@@ -65,13 +68,32 @@ class BaseTranscriber(ABC):
         )  # Function handles non-existence gracefully
 
         # 3. Check environment (highest priority, includes loaded vars)
-        self.api_key = os.environ.get(self.api_key_env_var)
+        self.api_key = None  # Initialize to None
 
-        if not self.api_key:
-            raise ValueError(
-                f"{self.api_key_env_var} environment variable is not set. "
-                "Please set it directly, in ./env, or in ~/.env."
-            )
+        if (
+            self.api_key_env_var
+        ):  # Only attempt to load API key if env var name is provided
+            # Load environment variables with priority: Shell > Project .env > Home .env
+            # 1. Load from home directory .env (lowest priority)
+            home_env_file = os.path.join(str(Path.home()), ".env")
+            load_env_from_file(
+                home_env_file
+            )  # Function handles non-existence gracefully
+
+            # 2. Load from project directory .env (overrides home .env)
+            project_env_file = ".env"  # Assumes CWD is project root
+            load_env_from_file(
+                project_env_file
+            )  # Function handles non-existence gracefully
+
+            # 3. Check environment (highest priority, includes loaded vars)
+            self.api_key = os.environ.get(self.api_key_env_var)
+
+            if not self.api_key:
+                raise ValueError(
+                    f"{self.api_key_env_var} environment variable is not set. "
+                    "Please set it directly, in ./env, or in ~/.env."
+                )
 
     def get_prompt(self, language: str | None) -> str:
         """
@@ -319,6 +341,112 @@ class GroqTranscriber(BaseTranscriber):
             gc.collect()
 
         return (False, "Max retries exceeded for server/network error")
+
+
+class LocalTranscriber(BaseTranscriber):
+    """Handles audio transcription using a local faster-whisper model."""
+
+    def __init__(self, callback: Callable, model: str = const.DEFAULT_LOCAL_MODEL):
+        """
+        Initialize the Local transcriber.
+
+        Args:
+            callback: Function to call with transcription results
+            model: Name of the faster-whisper model to use (e.g., "base", "tiny.en")
+        """
+        # For local transcriber, API key is not needed, but BaseTranscriber requires it.
+        # We can pass a dummy value or None, and handle it in BaseTranscriber if needed.
+        # For now, passing None and relying on BaseTranscriber's check to be skipped or handled.
+        super().__init__(callback, api_key_env_var=None, model=model)
+        self.model_name = model
+        self.device = "cpu"  # Default to CPU
+        self.compute_type = "int8"  # Default to int8 for efficiency
+
+        logger.info(
+            f"Loading faster-whisper model: '{self.model_name}' "
+            f"on device: '{self.device}' with compute type: '{self.compute_type}'"
+        )
+        try:
+            self.whisper_model = WhisperModel(
+                self.model_name, device=self.device, compute_type=self.compute_type
+            )
+            logger.info("Faster-whisper model loaded successfully.")
+        except Exception as e:
+            logger.error(f"Failed to load faster-whisper model: {e}")
+            raise
+
+    async def make_api_request(
+        self, audio_data: io.BytesIO, language: str | None = None
+    ) -> tuple[bool, dict | str]:
+        """
+        Perform local transcription using faster-whisper.
+
+        Args:
+            audio_data: BytesIO object containing audio data
+            language: Optional language code for transcription
+
+        Returns:
+            tuple: (success: bool, result_or_error: dict|str)
+                   On success: (True, {"text": "transcribed_text"})
+                   On failure: (False, error_message)
+        """
+        try:
+            # Run the blocking transcription in a separate thread
+            success, result = await asyncio.to_thread(
+                self._do_transcription, audio_data, language
+            )
+            return (success, result)
+        except Exception as e:
+            logger.error(f"Error during local transcription: {e}")
+            return (False, f"Local transcription failed: {e}")
+
+    def _do_transcription(
+        self, audio_data: io.BytesIO, language: str | None
+    ) -> tuple[bool, dict | str]:
+        """
+        Synchronous helper to perform faster-whisper transcription.
+        This method is designed to be run in a separate thread.
+        """
+        try:
+            audio_data.seek(0)  # Ensure we read from the beginning
+
+            # Read audio data into a NumPy array
+            audio_np, samplerate = soundfile.read(audio_data, dtype="float32")
+
+            # faster-whisper expects a 1D array (mono audio)
+            if audio_np.ndim > 1:
+                audio_np = np.mean(audio_np, axis=1)  # Convert stereo to mono
+
+            logger.info(
+                f"Starting local transcription with faster-whisper (language: {language})..."
+            )
+            segments, info = self.whisper_model.transcribe(
+                audio_np, language=language, initial_prompt=self.get_prompt(language)
+            )
+
+            full_text = "".join(segment.text for segment in segments)
+
+            logger.info(f"Detected language: {info.language}")
+            logger.info(f"Transcription result: '{full_text}'")
+
+            return (True, {"text": full_text})
+
+        except Exception as e:
+            logger.error(f"Error in _do_transcription: {e}")
+            return (False, f"Local transcription processing error: {e}")
+
+    async def close(self) -> None:
+        """Explicitly clean up faster-whisper model resources."""
+        logger.info("Unloading faster-whisper model...")
+        if hasattr(self, "whisper_model"):
+            # In faster-whisper, deleting the model object and garbage collection
+            # is typically how resources are released.
+            del self.whisper_model
+            self.whisper_model = None
+            import gc
+
+            gc.collect()
+            logger.info("Faster-whisper model unloaded.")
 
 
 class OpenAITranscriber(BaseTranscriber):
