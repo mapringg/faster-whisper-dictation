@@ -359,10 +359,10 @@ class StatusIcon:
                         "GLib not available, using fallback for queue processing"
                     )
             elif system == "Darwin":
-                # Check if AppKit is available before attempting to import
-                if importlib.util.find_spec("AppKit"):
+                # Check if Foundation is available before attempting to import
+                if importlib.util.find_spec("Foundation"):
                     try:
-                        # Use AppKit timer for macOS
+                        # Use Foundation timer for macOS
                         import Foundation
 
                         # Create a timer to process the queue
