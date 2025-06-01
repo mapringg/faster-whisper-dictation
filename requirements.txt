@@ -13,3 +13,4 @@ wave
 pystray
 Pillow
 webrtcvad
+aiohttp

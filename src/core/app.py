@@ -1,3 +1,4 @@
+import asyncio  # Added
 import logging
 import platform
 import signal
@@ -105,8 +106,16 @@ class App:
         # Configure state machine callbacks that combine functionality
         self.m.on_enter_READY(self._on_enter_ready)
         self.m.on_enter_RECORDING(self._on_enter_recording)
-        self.m.on_enter_TRANSCRIBING(self._on_enter_transcribing)
+        # self.m.on_enter_TRANSCRIBING(self._on_enter_transcribing) # Will be handled differently
+        self.m.on_enter_TRANSCRIBING(
+            self._async_on_enter_transcribing_wrapper
+        )  # New async wrapper
         self.m.on_enter_REPLAYING(self._on_enter_replaying)
+
+        # Asyncio event loop setup
+        self.async_loop = asyncio.new_event_loop()
+        self.async_thread = threading.Thread(target=self._start_async_loop, daemon=True)
+        self.async_thread.start()
 
         # Load sound effects with validation
         self.SOUND_EFFECTS = self._load_sound_effects()
@@ -153,8 +162,40 @@ class App:
             self.m.to_READY()
             return
 
-        # Start the actual transcription, passing the event which now contains audio_data
-        self._safe_start_transcription(event)
+        # Schedule the asynchronous transcription
+        asyncio.run_coroutine_threadsafe(
+            self._safe_start_transcription(event), self.async_loop
+        )
+
+    def _async_on_enter_transcribing_wrapper(self, event):
+        """Wrapper to call the async _on_enter_transcribing from the state machine."""
+        # This method is called by the state machine, which runs in the main thread or a pynput thread.
+        # We need to schedule the async _on_enter_transcribing to run in our asyncio loop.
+        logger.debug("Scheduling _on_enter_transcribing via wrapper")
+        asyncio.run_coroutine_threadsafe(
+            self._on_enter_transcribing(event), self.async_loop
+        )
+
+    async def _on_enter_transcribing(self, event):  # Changed to async def
+        """Handle entering TRANSCRIBING state asynchronously."""
+        audio_data = (
+            event.kwargs.get("audio_data") if hasattr(event, "kwargs") else None
+        )
+
+        if audio_data is None or audio_data.getbuffer().nbytes == 0:
+            logger.error(
+                "No audio data available for transcription - recording may have failed or was empty"
+            )
+            # Ensure UI updates are thread-safe if called from async context
+            self.async_loop.call_soon_threadsafe(
+                self.status_icon.update_state, StatusIconState.ERROR
+            )
+            await asyncio.sleep(1)  # Use asyncio.sleep
+            self.async_loop.call_soon_threadsafe(self.m.to_READY)
+            return
+
+        # Start the actual transcription asynchronously
+        await self._safe_start_transcription(event)  # Added await
 
     def _on_enter_replaying(self, event):
         """Handle entering REPLAYING state."""
@@ -249,6 +290,16 @@ class App:
 
         return sounds
 
+    def _start_async_loop(self):
+        """Starts the asyncio event loop."""
+        logger.info("Starting asyncio event loop in a new thread.")
+        asyncio.set_event_loop(self.async_loop)
+        try:
+            self.async_loop.run_forever()
+        finally:
+            self.async_loop.close()
+            logger.info("Asyncio event loop closed.")
+
     def _safe_start_recording(self, event) -> None:
         """Wrapper for recorder start with error handling."""
         try:
@@ -256,24 +307,43 @@ class App:
         except Exception as e:
             logger.error(f"Error starting recording: {str(e)}")
             self.status_icon.update_state(StatusIconState.ERROR)
-            self.m.to_READY()
+            self.m.to_READY()  # This should be called thread-safe if m is not async-aware
+            # self.async_loop.call_soon_threadsafe(self.m.to_READY)
 
-    def _safe_start_transcription(self, event) -> None:
-        """Wrapper for transcription start with error handling."""
+    async def _safe_start_transcription(self, event) -> None:  # Changed to async def
+        """Wrapper for transcription start with error handling (now asynchronous)."""
         try:
-            # Update status icon first
-            with self.status_icon_lock:
-                logger.info("Transcribing audio...")
-                self.status_icon.update_state(StatusIconState.TRANSCRIBING)
+            # Update status icon first (ensure thread-safety if status_icon is not async-aware)
+            # Using call_soon_threadsafe if status_icon methods are not designed for async calls directly
+            # from a different thread's loop.
+            # However, if status_icon is simple and its state updates are atomic or internally locked,
+            # direct calls might be fine. For safety, let's assume they might need to be thread-safe.
+            def update_status_sync():
+                with self.status_icon_lock:
+                    logger.info("Transcribing audio...")
+                    self.status_icon.update_state(StatusIconState.TRANSCRIBING)
+
+            # If running in the asyncio loop's thread, direct call is fine.
+            # If called from another thread (e.g. via run_coroutine_threadsafe),
+            # and status_icon interacts with GUI elements, it must be called on the main thread.
+            # For now, let's assume status_icon updates are safe or handled internally.
+            update_status_sync()
 
             # The event already contains audio_data and language.
-            # The transcriber.transcribe method is designed to pick these up from event.kwargs
-            self.transcriber.transcribe(event)
+            # The transcriber.transcribe method is now async.
+            await self.transcriber.transcribe(event)  # Added await
         except Exception as e:
             logger.error(f"Error starting transcription: {str(e)}")
-            with self.status_icon_lock:
-                self.status_icon.update_state(StatusIconState.ERROR)
-            self.m.to_READY()
+
+            def update_error_status_sync():
+                with self.status_icon_lock:
+                    self.status_icon.update_state(StatusIconState.ERROR)
+
+            # update_error_status_sync()
+            self.async_loop.call_soon_threadsafe(update_error_status_sync)
+
+            # self.m.to_READY() # This should be called thread-safe
+            self.async_loop.call_soon_threadsafe(self.m.to_READY)
 
     def _safe_start_replay(self, event) -> None:
         """Wrapper for replay start with error handling."""
@@ -526,9 +596,28 @@ class App:
             # Stop status icon
             if hasattr(self, "status_icon"):
                 try:
-                    self.status_icon.stop()
+                    # Ensure status_icon.stop() is called from the correct thread if it interacts with GUI
+                    if hasattr(self.status_icon, "_icon") and hasattr(
+                        self.status_icon._icon, "stop"
+                    ):
+                        # If pystray, it might need to be stopped from the main thread or its own thread.
+                        # For now, assume direct call is okay or handled by pystray.
+                        self.status_icon.stop()
+                    elif hasattr(self.status_icon, "stop"):  # Fallback
+                        self.status_icon.stop()
+
                 except Exception as e:
                     logger.error(f"Error stopping status icon: {str(e)}")
+
+            # Stop asyncio loop
+            if hasattr(self, "async_loop") and self.async_loop.is_running():
+                logger.info("Stopping asyncio event loop...")
+                self.async_loop.call_soon_threadsafe(self.async_loop.stop)
+                # Wait for the async_thread to finish
+                if hasattr(self, "async_thread") and self.async_thread.is_alive():
+                    self.async_thread.join(timeout=5)  # Wait for 5 seconds
+                    if self.async_thread.is_alive():
+                        logger.warning("Asyncio thread did not stop in time.")
 
             # Clean up transcriber resources
             if hasattr(self, "transcriber"):

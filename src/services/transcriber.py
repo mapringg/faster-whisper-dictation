@@ -1,15 +1,16 @@
+import asyncio  # Added
 import io
 import json
 import logging
 import os
-import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import requests
+import aiohttp  # Added
 
+# import requests # Removed
 from ..core import constants as const
 from ..core.utils import load_env_from_file
 
@@ -88,11 +89,11 @@ class BaseTranscriber(ABC):
             return "Transcribe this audio accurately. It likely contains technical software development discussion, including terms like Typescript, JavaScript, React, Next.js, React Native, Expo, Supabase, PostgreSQL, MongoDB, Tailwind CSS, Shadcn, and system design. Prioritize correct spelling of technical terms, acronyms, and proper nouns. Maintain standard punctuation and capitalization."
 
     @abstractmethod
-    def make_api_request(
+    async def make_api_request(  # Changed to async def
         self, audio_data: io.BytesIO, language: str | None = None
     ) -> tuple[bool, dict | str]:
         """
-        Make API request with retry mechanism.
+        Make API request with retry mechanism. (Now asynchronous)
 
         Args:
             audio_data: BytesIO object containing audio data
@@ -105,9 +106,9 @@ class BaseTranscriber(ABC):
         """
         pass
 
-    def transcribe(self, event: Any) -> None:
+    async def transcribe(self, event: Any) -> None:  # Changed to async def
         """
-        Handle the transcription process from audio input to text output.
+        Handle the transcription process from audio input to text output. (Now asynchronous)
 
         Args:
             event: State machine event containing audio_data (BytesIO) and language info
@@ -127,7 +128,9 @@ class BaseTranscriber(ABC):
 
         try:
             # Make API request and handle response
-            success, result_or_error = self.make_api_request(audio_data, language)
+            success, result_or_error = await self.make_api_request(
+                audio_data, language
+            )  # Added await
 
             if success:
                 text = result_or_error.get("text", "")
@@ -187,11 +190,11 @@ class GroqTranscriber(BaseTranscriber):
         """
         super().__init__(callback, "GROQ_API_KEY", model)
 
-    def make_api_request(
+    async def make_api_request(  # Changed to async def
         self, audio_data: io.BytesIO, language: str | None = None
     ) -> tuple[bool, dict | str]:
         """
-        Make API request to Groq with retry mechanism.
+        Make API request to Groq with retry mechanism. (Now asynchronous)
 
         Args:
             audio_data: BytesIO object containing audio WAV data
@@ -202,100 +205,105 @@ class GroqTranscriber(BaseTranscriber):
             None: If all retries failed
         """
         headers = {"Authorization": f"Bearer {self.api_key}"}
+        timeout = aiohttp.ClientTimeout(total=self.REQUEST_TIMEOUT)
 
-        for attempt in range(self.MAX_RETRIES):
-            try:
-                audio_data.seek(0)
-                # Get appropriate prompt
-                prompt = self.get_prompt(language)
+        async with aiohttp.ClientSession(
+            timeout=timeout
+        ) as session:  # Added aiohttp session
+            for attempt in range(self.MAX_RETRIES):
+                try:
+                    audio_data.seek(0)
+                    prompt = self.get_prompt(language)
 
-                data = {
-                    "model": self.model,
-                    "prompt": prompt,
-                    "temperature": 0.0,
-                }
+                    form_data = aiohttp.FormData()
+                    form_data.add_field("model", self.model)
+                    form_data.add_field("prompt", prompt)
+                    form_data.add_field("temperature", "0.0")
 
-                if language and isinstance(language, str):
-                    data["language"] = language
-                    logger.info(f"Using language: {language}")
+                    if language and isinstance(language, str):
+                        form_data.add_field("language", language)
+                        logger.info(f"Using language: {language}")
 
-                # Pass the BytesIO object directly
-                files = {"file": ("audio.wav", audio_data, "audio/wav")}
-                response = requests.post(
-                    self.API_ENDPOINT,
-                    headers=headers,
-                    files=files,
-                    data=data,
-                    timeout=self.REQUEST_TIMEOUT,
-                )
-
-                # Handle successful response
-                if response.status_code == 200:
-                    try:
-                        result = response.json()
-                        # Close the response to release resources
-                        response.close()
-                        return (True, result)
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Failed to decode JSON response: {str(e)}")
-                        # Close the response to release resources
-                        if response:
-                            response.close()
-                        continue
-
-                # Handle rate limiting
-                elif response.status_code == 429:
-                    retry_after = int(
-                        response.headers.get("Retry-After", self.INITIAL_RETRY_DELAY)
+                    form_data.add_field(
+                        "file",
+                        audio_data,
+                        filename="audio.wav",
+                        content_type="audio/wav",
                     )
-                    logger.warning(f"Rate limited. Waiting {retry_after} seconds...")
-                    # Close the response to release resources
-                    response.close()
-                    time.sleep(retry_after)
-                    continue
 
-                # Handle other API errors
-                else:
-                    error_msg = f"API error: {response.status_code} - {response.text}"
-                    logger.error(error_msg)
+                    async with session.post(  # Changed to async session.post
+                        self.API_ENDPOINT, headers=headers, data=form_data
+                    ) as response:
+                        if response.status == 200:
+                            try:
+                                result = await response.json()  # Added await
+                                return (True, result)
+                            except json.JSONDecodeError as e:
+                                logger.error(
+                                    f"Failed to decode JSON response: {str(e)}"
+                                )
+                                continue
+                            except aiohttp.ContentTypeError as e:
+                                logger.error(
+                                    f"Unexpected content type: {str(e)}. Response text: {await response.text()}"
+                                )
+                                continue
 
-                    # Close the response to release resources
-                    response.close()
+                        elif response.status == 429:
+                            retry_after = int(
+                                response.headers.get(
+                                    "Retry-After", str(self.INITIAL_RETRY_DELAY)
+                                )
+                            )
+                            logger.warning(
+                                f"Rate limited. Waiting {retry_after} seconds..."
+                            )
+                            await asyncio.sleep(retry_after)  # Changed to asyncio.sleep
+                            continue
+                        else:
+                            response_text = await response.text()  # Added await
+                            error_msg = (
+                                f"API error: {response.status} - {response_text}"
+                            )
+                            logger.error(error_msg)
 
-                    # Handle specific error cases
-                    if response.status_code == 401:
-                        error_msg = "Invalid API key - please check your GROQ_API_KEY"
-                        logger.error(error_msg)
-                        return (False, error_msg)
-                    elif response.status_code == 413:
-                        error_msg = (
-                            "Audio file too large - try recording a shorter segment"
-                        )
-                        logger.error(error_msg)
-                        return (False, error_msg)
+                            if response.status == 401:
+                                error_msg = (
+                                    "Invalid API key - please check your GROQ_API_KEY"
+                                )
+                                logger.error(error_msg)
+                                return (False, error_msg)
+                            elif response.status == 413:
+                                error_msg = "Audio file too large - try recording a shorter segment"
+                                logger.error(error_msg)
+                                return (False, error_msg)
 
-                    # Exponential backoff for retries
+                            if attempt < self.MAX_RETRIES - 1:
+                                wait_time = self.INITIAL_RETRY_DELAY * (2**attempt)
+                                logger.info(f"Retrying in {wait_time} seconds...")
+                                await asyncio.sleep(
+                                    wait_time
+                                )  # Changed to asyncio.sleep
+
+                except aiohttp.ClientError as e:  # Changed exception type
+                    logger.error(f"Network error: {str(e)}")
                     if attempt < self.MAX_RETRIES - 1:
                         wait_time = self.INITIAL_RETRY_DELAY * (2**attempt)
                         logger.info(f"Retrying in {wait_time} seconds...")
-                        time.sleep(wait_time)
-
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Network error: {str(e)}")
-                # Close the response to release resources if it exists
-                if response:
-                    try:
-                        response.close()
-                    except:  # noqa: E722
-                        pass
-
-                if attempt < self.MAX_RETRIES - 1:
-                    wait_time = self.INITIAL_RETRY_DELAY * (2**attempt)
-                    logger.info(f"Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
+                        await asyncio.sleep(wait_time)  # Changed to asyncio.sleep
+                except Exception as e:  # Catch other potential errors
+                    logger.error(f"An unexpected error occurred: {str(e)}")
+                    if attempt < self.MAX_RETRIES - 1:
+                        wait_time = self.INITIAL_RETRY_DELAY * (2**attempt)
+                        logger.info(f"Retrying in {wait_time} seconds...")
+                        await asyncio.sleep(wait_time)  # Changed to asyncio.sleep
+                    else:
+                        return (False, f"An unexpected error occurred: {str(e)}")
 
             # Force garbage collection after each attempt
-            if attempt % 2 == 1:
+            if (
+                attempt % 2 == 1
+            ):  # This remains outside the async with session block, which might be fine.
                 import gc
 
                 gc.collect()
@@ -319,11 +327,11 @@ class OpenAITranscriber(BaseTranscriber):
         """
         super().__init__(callback, "OPENAI_API_KEY", model)
 
-    def make_api_request(
+    async def make_api_request(  # Changed to async def
         self, audio_data: io.BytesIO, language: str | None = None
     ) -> tuple[bool, dict | str]:
         """
-        Make API request to OpenAI with retry mechanism.
+        Make API request to OpenAI with retry mechanism. (Now asynchronous)
 
         Args:
             audio_data: BytesIO object containing audio WAV data
@@ -334,98 +342,109 @@ class OpenAITranscriber(BaseTranscriber):
             None: If all retries failed
         """
         headers = {"Authorization": f"Bearer {self.api_key}"}
+        timeout = aiohttp.ClientTimeout(total=self.REQUEST_TIMEOUT)
 
-        for attempt in range(self.MAX_RETRIES):
-            try:
-                audio_data.seek(0)
-                # Get appropriate prompt
-                prompt = self.get_prompt(language)
+        async with aiohttp.ClientSession(
+            timeout=timeout
+        ) as session:  # Added aiohttp session
+            for attempt in range(self.MAX_RETRIES):
+                try:
+                    audio_data.seek(0)
+                    prompt = self.get_prompt(language)
 
-                data = {
-                    "model": self.model,
-                    "prompt": prompt,
-                    "temperature": 0.0,
-                }
+                    form_data = aiohttp.FormData()
+                    form_data.add_field("model", self.model)
+                    form_data.add_field("prompt", prompt)
+                    form_data.add_field("temperature", "0.0")
 
-                if language and isinstance(language, str):
-                    data["language"] = language
-                    logger.info(f"Using language: {language}")
+                    if language and isinstance(language, str):
+                        form_data.add_field("language", language)
+                        logger.info(f"Using language: {language}")
 
-                # Pass the BytesIO object directly
-                files = {"file": ("audio.wav", audio_data, "audio/wav")}
-                response = requests.post(
-                    self.API_ENDPOINT,
-                    headers=headers,
-                    files=files,
-                    data=data,
-                    timeout=self.REQUEST_TIMEOUT,
-                )
-
-                # Handle successful response
-                if response.status_code == 200:
-                    try:
-                        result = response.json()
-                        # Close the response to release resources
-                        response.close()
-                        return (True, result)
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Failed to decode JSON response: {str(e)}")
-                        # Close the response to release resources
-                        if response:
-                            response.close()
-                        continue
-
-                # Handle rate limiting
-                elif response.status_code == 429:
-                    retry_after = int(
-                        response.headers.get("Retry-After", self.INITIAL_RETRY_DELAY)
+                    form_data.add_field(
+                        "file",
+                        audio_data,
+                        filename="audio.wav",
+                        content_type="audio/wav",
                     )
-                    logger.warning(f"Rate limited. Waiting {retry_after} seconds...")
-                    # Close the response to release resources
-                    response.close()
-                    time.sleep(retry_after)
-                    continue
 
-                # Handle other API errors
-                else:
-                    error_msg = f"API error: {response.status_code} - {response.text}"
-                    logger.error(error_msg)
+                    async with session.post(  # Changed to async session.post
+                        self.API_ENDPOINT, headers=headers, data=form_data
+                    ) as response:
+                        if response.status == 200:
+                            try:
+                                result = await response.json()  # Added await
+                                return (True, result)
+                            except json.JSONDecodeError as e:
+                                logger.error(
+                                    f"Failed to decode JSON response: {str(e)}"
+                                )
+                                continue
+                            except aiohttp.ContentTypeError as e:
+                                logger.error(
+                                    f"Unexpected content type: {str(e)}. Response text: {await response.text()}"
+                                )
+                                continue
 
-                    # Close the response to release resources
-                    response.close()
+                        elif response.status == 429:
+                            retry_after = int(
+                                response.headers.get(
+                                    "Retry-After", str(self.INITIAL_RETRY_DELAY)
+                                )
+                            )
+                            logger.warning(
+                                f"Rate limited. Waiting {retry_after} seconds..."
+                            )
+                            await asyncio.sleep(retry_after)  # Changed to asyncio.sleep
+                            continue
+                        else:
+                            response_text = await response.text()  # Added await
+                            error_msg = (
+                                f"API error: {response.status} - {response_text}"
+                            )
+                            logger.error(error_msg)
 
-                    # Handle specific error cases
-                    if response.status_code == 401:
-                        error_msg = "Invalid API key - please check your OPENAI_API_KEY"
-                        logger.error(error_msg)
-                        return (False, error_msg)
-                    elif response.status_code == 413:
-                        error_msg = "Audio file too large - must be less than 25MB"
-                        logger.error(error_msg)
-                        return (False, error_msg)
+                            if response.status == 401:
+                                error_msg = (
+                                    "Invalid API key - please check your OPENAI_API_KEY"
+                                )
+                                logger.error(error_msg)
+                                return (False, error_msg)
+                            elif (
+                                response.status == 413
+                            ):  # OpenAI uses 413 for payload too large
+                                error_msg = (
+                                    "Audio file too large - must be less than 25MB"
+                                )
+                                logger.error(error_msg)
+                                return (False, error_msg)
 
-                    # Exponential backoff for retries
+                            if attempt < self.MAX_RETRIES - 1:
+                                wait_time = self.INITIAL_RETRY_DELAY * (2**attempt)
+                                logger.info(f"Retrying in {wait_time} seconds...")
+                                await asyncio.sleep(
+                                    wait_time
+                                )  # Changed to asyncio.sleep
+
+                except aiohttp.ClientError as e:  # Changed exception type
+                    logger.error(f"Network error: {str(e)}")
                     if attempt < self.MAX_RETRIES - 1:
                         wait_time = self.INITIAL_RETRY_DELAY * (2**attempt)
                         logger.info(f"Retrying in {wait_time} seconds...")
-                        time.sleep(wait_time)
-
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Network error: {str(e)}")
-                # Close the response to release resources if it exists
-                if response:
-                    try:
-                        response.close()
-                    except:  # noqa: E722
-                        pass
-
-                if attempt < self.MAX_RETRIES - 1:
-                    wait_time = self.INITIAL_RETRY_DELAY * (2**attempt)
-                    logger.info(f"Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
+                        await asyncio.sleep(wait_time)  # Changed to asyncio.sleep
+                except Exception as e:  # Catch other potential errors
+                    logger.error(f"An unexpected error occurred: {str(e)}")
+                    if attempt < self.MAX_RETRIES - 1:
+                        wait_time = self.INITIAL_RETRY_DELAY * (2**attempt)
+                        logger.info(f"Retrying in {wait_time} seconds...")
+                        await asyncio.sleep(wait_time)  # Changed to asyncio.sleep
+                    else:
+                        return (False, f"An unexpected error occurred: {str(e)}")
 
             # Force garbage collection after each attempt
-            if attempt % 2 == 1:
+            if (
+                attempt % 2 == 1
+            ):  # This remains outside the async with session block, which might be fine.
                 import gc
 
                 gc.collect()
