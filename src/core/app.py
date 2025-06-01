@@ -590,9 +590,7 @@ class App:
                 try:
                     if self.m.is_RECORDING():
                         self.recorder.stop()
-                    # Clear recorder frames to free memory
-                    if hasattr(self.recorder, "frames"):
-                        self.recorder.frames = []
+                    # Recorder manages its own internal buffers (e.g., accumulated_audio_data, speech_frames)
                 except Exception as e:
                     logger.error(f"Error stopping recorder: {str(e)}")
 
@@ -612,6 +610,37 @@ class App:
                 except Exception as e:
                     logger.error(f"Error stopping status icon: {str(e)}")
 
+            # Clean up transcriber resources before stopping the async loop
+            if hasattr(self, "transcriber") and hasattr(self.transcriber, "close"):
+                if asyncio.iscoroutinefunction(self.transcriber.close):
+                    logger.info(
+                        f"Closing transcriber: {self.transcriber.__class__.__name__}"
+                    )
+                    if self.async_loop.is_running():
+                        future = asyncio.run_coroutine_threadsafe(
+                            self.transcriber.close(), self.async_loop
+                        )
+                        try:
+                            future.result(timeout=5)  # Wait for close to complete
+                        except TimeoutError:
+                            logger.warning("Timeout closing transcriber.")
+                        except Exception as e:
+                            logger.error(f"Error closing transcriber: {e}")
+                    else:
+                        logger.warning(
+                            "Async loop not running, cannot close transcriber asynchronously."
+                        )
+                elif callable(
+                    self.transcriber.close
+                ):  # For hypothetical sync transcribers
+                    logger.info(
+                        f"Closing sync transcriber: {self.transcriber.__class__.__name__}"
+                    )
+                    try:
+                        self.transcriber.close()
+                    except Exception as e:
+                        logger.error(f"Error closing sync transcriber: {e}")
+
             # Stop asyncio loop
             if hasattr(self, "async_loop") and self.async_loop.is_running():
                 logger.info("Stopping asyncio event loop...")
@@ -622,10 +651,24 @@ class App:
                     if self.async_thread.is_alive():
                         logger.warning("Asyncio thread did not stop in time.")
 
-            # Clean up transcriber resources
-            if hasattr(self, "transcriber"):
-                # Nothing to do for now, but could be extended
-                pass
+            # Join listener threads
+            if (
+                hasattr(self, "key_listener_thread")
+                and self.key_listener_thread.is_alive()
+            ):
+                logger.info("Waiting for key listener thread to join...")
+                self.key_listener_thread.join(timeout=2)
+                if self.key_listener_thread.is_alive():
+                    logger.warning("Key listener thread did not join in time.")
+
+            if (
+                hasattr(self, "cancel_listener_thread")
+                and self.cancel_listener_thread.is_alive()
+            ):
+                logger.info("Waiting for cancel listener thread to join...")
+                self.cancel_listener_thread.join(timeout=2)
+                if self.cancel_listener_thread.is_alive():
+                    logger.warning("Cancel listener thread did not join in time.")
 
             # Clean up keyboard replayer
             if hasattr(self, "replayer"):
@@ -673,8 +716,10 @@ class App:
             )
 
             logger.info("Starting key listener threads...")
-            key_listener_thread.start()
-            cancel_listener_thread.start()
+            self.key_listener_thread = key_listener_thread  # Store thread
+            self.cancel_listener_thread = cancel_listener_thread  # Store thread
+            self.key_listener_thread.start()
+            self.cancel_listener_thread.start()
 
             logger.info("Handing control to status icon main loop...")
             run_icon_on_main_thread(self.status_icon._icon)
