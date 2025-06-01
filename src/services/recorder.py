@@ -6,7 +6,14 @@ from contextlib import contextmanager
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
-import webrtcvad
+
+try:
+    import webrtcvad
+except ImportError:  # Fallback for unsupported platforms
+    webrtcvad = None
+    logging.getLogger(__name__).warning(
+        "webrtcvad is not available on this platform – Voice Activity Detection will be disabled."
+    )
 
 from ..core.utils import get_default_devices
 
