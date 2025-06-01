@@ -116,7 +116,6 @@ class KeyboardReplayer:
         """
         logger.info("Starting text replay...")
         segments = event.kwargs.get("segments", [])
-        text_buffer: list[str] = []
 
         # Validate input segments
         if not self._validate_segments(segments):
