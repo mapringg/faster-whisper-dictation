@@ -239,9 +239,17 @@ class App:
                         logger.info(
                             f"Closing existing async transcriber: {self.transcriber.__class__.__name__}"
                         )
-                        asyncio.run_coroutine_threadsafe(
+                        close_future = asyncio.run_coroutine_threadsafe(
                             self.transcriber.close(), self.async_loop
                         )
+                        try:
+                            close_future.result(
+                                timeout=10
+                            )  # or a shorter, configurable timeout
+                        except Exception as e:
+                            logger.warning(
+                                f"Previous transcriber failed to close cleanly: {e}"
+                            )
                     else:
                         logger.info(
                             f"Closing existing sync transcriber: {self.transcriber.__class__.__name__}"
