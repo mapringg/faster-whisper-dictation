@@ -142,31 +142,6 @@ class App:
             # Start the actual recording
             self._safe_start_recording(event)
 
-    def _on_enter_transcribing(self, event):
-        """Handle entering TRANSCRIBING state."""
-        # Check if we have valid audio data (BytesIO object)
-        audio_data = (
-            event.kwargs.get("audio_data") if hasattr(event, "kwargs") else None
-        )
-
-        if audio_data is None or audio_data.getbuffer().nbytes == 0:
-            # Handle the case where recording failed or produced no data
-            logger.error(
-                "No audio data available for transcription - recording may have failed or was empty"
-            )
-            with self.status_icon_lock:
-                self.status_icon.update_state(StatusIconState.ERROR)
-            # Wait a moment to show the error state
-            time.sleep(1)
-            # Return to READY state
-            self.m.to_READY()
-            return
-
-        # Schedule the asynchronous transcription
-        asyncio.run_coroutine_threadsafe(
-            self._safe_start_transcription(event), self.async_loop
-        )
-
     def _async_on_enter_transcribing_wrapper(self, event):
         """Wrapper to call the async _on_enter_transcribing from the state machine."""
         # This method is called by the state machine, which runs in the main thread or a pynput thread.
