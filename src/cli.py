@@ -76,6 +76,25 @@ Supported languages: af, am, ar, as, az, ba, be, bg, bn, bo, br, bs, ca, cs, cy,
 Enable sound effects for recording actions (start, stop, cancel).
 By default, sound effects are disabled.""",
     )
+    # VAD arguments
+    parser.add_argument(
+        "--vad",
+        action=argparse.BooleanOptionalAction,  # Creates --vad and --no-vad
+        default=True,  # VAD enabled by default
+        help="""\
+Enable or disable Voice Activity Detection (VAD).
+Default: Enabled (--vad). Use --no-vad to disable.""",
+    )
+    parser.add_argument(
+        "--vad-sensitivity",
+        type=int,
+        choices=[0, 1, 2, 3],
+        default=1,
+        help="""\
+Set the VAD sensitivity. An integer between 0 and 3.
+0 is the least aggressive about filtering out non-speech, 3 is the most aggressive.
+Default: 1 (moderate).""",
+    )
 
     args = parser.parse_args()
     return args

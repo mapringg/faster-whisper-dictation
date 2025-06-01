@@ -64,7 +64,20 @@ class App:
         self.m = create_state_machine()
 
         # Initialize components
-        self.recorder = Recorder(self.m.finish_recording)
+        # args.vad is created by argparse.BooleanOptionalAction in cli.py
+        # args.vad_sensitivity is also from cli.py
+        vad_enabled_arg = getattr(
+            args, "vad", True
+        )  # Default to True if --vad/--no-vad not specified
+        vad_sensitivity_arg = getattr(args, "vad_sensitivity", 1)  # Default to 1
+        logger.info(
+            f"Initializing Recorder with VAD enabled: {vad_enabled_arg}, sensitivity: {vad_sensitivity_arg}"
+        )
+        self.recorder = Recorder(
+            self.m.finish_recording,
+            vad_enabled=vad_enabled_arg,
+            vad_sensitivity=vad_sensitivity_arg,
+        )
 
         # Initialize the appropriate transcriber based on the argument
         if args.transcriber == "openai":

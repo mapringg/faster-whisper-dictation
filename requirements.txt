@@ -12,3 +12,4 @@ soundfile
 wave
 pystray
 Pillow
+webrtcvad
