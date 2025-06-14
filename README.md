@@ -1,172 +1,120 @@
 # Faster Whisper Dictation
 
-A lightweight dictation service that uses OpenAI's API (default) or Groq's API for fast and accurate speech-to-text transcription. Double-tap a key to start recording, single-tap to stop, and your speech will be automatically transcribed and typed out.
+A lightweight, key-activated dictation service that uses local or cloud-based transcription for fast and accurate speech-to-text. Double-press a key to start recording, single-press to stop, and your speech is automatically typed out.
+
+This service supports OpenAI, Groq, and local `faster-whisper` models.
 
 ## Requirements
 
-- Python 3.8 or higher
-- Linux (Debian/Ubuntu/Mint) or macOS
-- PortAudio (required for audio input)
+- Python 3.8+
+- **macOS** or **Linux** (Debian/Ubuntu/Mint)
+- **Audio Dependencies**:
   - macOS: `brew install portaudio`
-  - Debian/Ubuntu/Mint: `sudo apt-get install portaudio19-dev`
-- Python packages: sounddevice, soundfile, pynput, transitions, requests, numpy, pystray, Pillow, uinput (Linux only)
-- Development packages (optional): psutil, matplotlib (install with `pip install -e .[dev]`)
-- Linux-specific requirements:
-  - `xsel`: Required for clipboard functionality. Install via package manager (e.g., `sudo apt install xsel`). The setup script will warn if it's missing.
-  - `/dev/uinput` device with proper permissions (setup.sh will configure this).
-  - User must be in the `input` group (setup.sh will add this if needed).
+  - Linux: `sudo apt-get install portaudio19-dev`
+- **Linux-specific clipboard tool**:
+  - `xsel` is required for clipboard functionality on X11. The setup script will warn if it's missing.
+  - `sudo apt install xsel`
 
 ## Installation
 
-1. Clone this repository:
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/doctorguile/faster-whisper-dictation.git
+    cd faster-whisper-dictation
+    ```
 
-   ```bash
-   git clone https://github.com/yourusername/faster-whisper-dictation.git
-   cd faster-whisper-dictation
-   ```
+2.  **Set up API Keys (Optional):**
+    If you plan to use OpenAI or Groq, create a `.env` file in the project directory or your home directory (`~/.env`):
+    ```ini
+    # Required for OpenAI transcriber
+    OPENAI_API_KEY="your_openai_api_key"
 
-2. Set up your API keys:
-   Create a `.env` file in your home directory with your API keys:
+    # Required for Groq transcriber
+    GROQ_API_KEY="your_groq_api_key"
+    ```
 
-   ```bash
-   # Required for OpenAI (default transcriber)
-   OPENAI_API_KEY=your_openai_api_key_here
-   # Required only if using Groq transcriber
-   GROQ_API_KEY=your_groq_api_key_here
-   ```
-
-3. Run the setup script:
-
-   ```bash
-   ./setup.sh
-   ```
-
-   On Linux, if the setup adds you to the `input` group, you **must**:
-
-   - Log out and log back in for the group change to take effect
-   - Verify permissions with: `ls -l /dev/uinput` (should show `crw-rw---- 1 root input`)
-
-The setup script will:
-
-- Create a Python virtual environment
-- Install required dependencies
-- Set up the service to start automatically at login
-- Start the service
+3.  **Run the setup script:**
+    ```bash
+    ./setup.sh
+    ```
+    This script will:
+    - Create a Python virtual environment (`.venv`).
+    - Install all required dependencies from `pyproject.toml`.
+    - Set up the service to start automatically at login (`launchd` on macOS, `systemd` on Linux).
+    - On Linux, it will configure `/dev/uinput` permissions. **You must log out and log back in** if prompted to apply group changes.
 
 ## Usage
 
-On macOS:
+The application runs as a background service with a status icon in the system tray.
 
-- **Double-tap** Right Command to start recording
-- **Single-tap** Right Command to stop recording
-- **Double-tap** Right Option to cancel recording
+### Default Hotkeys
 
-On Linux:
+| Action               | macOS Hotkey          | Linux Hotkey    |
+| -------------------- | --------------------- | --------------- |
+| **Start Recording**  | Double-press `Right ⌘` | Double-press `Right Ctrl` |
+| **Stop Recording**   | Single-press `Right ⌘` | Single-press `Right Ctrl` |
+| **Cancel Recording** | Double-press `Right ⌥` | Double-press `Right Alt`  |
 
-- **Double-tap** Right Control to start recording
-- **Single-tap** Right Control to stop recording
-- **Double-tap** Right Alt to cancel recording
+Your speech is automatically transcribed, copied to the clipboard, and pasted at your cursor's current position.
 
-Your speech will be automatically transcribed, copied to the clipboard, and then pasted at the current cursor position using a simulated Ctrl+V.
+### Status Icon Menu
 
-To change the trigger key, stop the service and restart it with the `-d` option:
+Right-click the status icon for options:
+- **Transcriber**: Switch between OpenAI, Groq, and Local models.
+- **Language**: Select the language for transcription.
+- **Enable/Disable Sounds**: Toggle audio feedback for actions.
+- **Refresh Audio Devices**: Rescan for new audio hardware.
+- **Exit**: Shut down the service.
 
+## Command-Line Options
+
+You can customize the behavior by passing arguments to `run.sh`. To make these changes permanent, you'll need to edit the service file (`dictation.service` or `com.user.dictation.plist`) and reinstall the service.
+
+Example:
 ```bash
-# For Linux:
-systemctl --user stop dictation.service
-./run.sh -d "<ctrl_l>"  # Use left Control instead
-
-# For macOS:
-launchctl unload ~/Library/LaunchAgents/com.user.dictation.plist
-./run.sh -d "<ctrl_l>"  # Use left Control instead
+# Run with a different trigger key and the local transcriber
+./run.sh --trigger-key "<cmd>+<shift>+d" --transcriber local
 ```
 
-## Options
-
-```
--d, --trigger-key    Key to use for triggering recording (default: Key.cmd_r)
--t, --max-time      Maximum recording time in seconds (default: 30)
--l, --language      Specify language for better accuracy (e.g., 'en' for English)
--m, --model-name    Model to use (default: gpt-4o-transcribe for OpenAI, whisper-large-v3 for Groq)
---transcriber       Transcription service to use: 'openai' (default) or 'groq'
---enable-sounds     Enable sound effects for recording actions
-```
+**Key Options:**
+- `--transcriber`: `openai`, `groq`, or `local` (default: `openai`).
+- `-m, --model-name`: Specify a model (e.g., `tiny.en` for local).
+- `-d, --trigger-key`: Set a new trigger key using `pynput` format.
+- `-l, --language`: Set transcription language (e.g., `fr`).
+- `--enable-sounds`: Enable audio feedback.
+- `--no-vad`: Disable Voice Activity Detection.
 
 ## Service Management
 
 ### Linux (systemd)
-
 ```bash
-# Check service status
+# Check status
 systemctl --user status dictation.service
 
 # View logs
-journalctl --user -u dictation.service
+journalctl --user -u dictation.service -f
 
 # Restart service
 systemctl --user restart dictation.service
 ```
 
-### Linux (Desktop Environments)
-
-For desktop environments like GNOME, KDE, or XFCE, the application will automatically start on login using the `dictation-autostart.desktop` file.
-
-### macOS
-
+### macOS (launchd)
 ```bash
-# Check service status
+# Check status
 launchctl list | grep com.user.dictation
 
 # View logs
-cat /tmp/dictation.stdout.log
-cat /tmp/dictation.stderr.log
+tail -f /tmp/dictation.stdout.log
 
 # Restart service
-launchctl unload ~/Library/LaunchAgents/com.user.dictation.plist
-launchctl load ~/Library/LaunchAgents/com.user.dictation.plist
+launchctl kickstart -k gui/$(id -u)/com.user.dictation
 ```
 
-## Code Structure
-
-The project is organized as follows:
-
-- `src/`: Contains the main application code
-  - `cli.py`: Handles command-line argument parsing
-  - `core/`: Contains the core application logic
-  - `services/`: Contains modules for input handling, recording, and transcription
-
-## Troubleshooting
-
-1. If the service isn't starting:
-
-   - Check the logs (see above)
-   - Ensure your API keys are set in `~/.env`
-   - Verify Python and required packages are installed
-
-2. If recording isn't working:
-
-   - Check your microphone permissions
-   - Verify your default audio input device is set correctly
-
-3. If the service needs to be restarted:
-
-   ```bash
-   # Linux
-   systemctl --user restart dictation.service
-
-   # macOS
-   launchctl unload ~/Library/LaunchAgents/com.user.dictation.plist
-   launchctl load ~/Library/LaunchAgents/com.user.dictation.plist
-   ```
-
 ## Uninstallation
-
-To remove the service:
-
+To remove the service and auto-start configurations, run:
 ```bash
 ./revert_setup.sh
 ```
 
 ## License
-
-MIT License - See LICENSE file for details
+This project is licensed under the MIT License.

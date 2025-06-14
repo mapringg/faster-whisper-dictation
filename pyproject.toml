@@ -1,6 +1,7 @@
 [project]
 name = "faster-whisper-dictation"
-version = "0.1.0"
+version = "0.2.0"
+description = "A lightweight, key-activated dictation service using local or cloud-based transcription."
 requires-python = ">=3.8"
 dependencies = [
     "pynput>=1.7.8",
@@ -9,18 +10,18 @@ dependencies = [
     "argparse",
     "transitions",
     "numpy",
-    "requests",
     "sounddevice",
     "soundfile",
-    "wave",
     "pystray",
-    "Pillow"
+    "webrtcvad; platform_system != 'Windows'",
+    "aiohttp",
+    "faster-whisper",
 ]
 
 [project.optional-dependencies]
 dev = [
     "psutil",
-    "matplotlib"
+    "matplotlib",
 ]
 
 [tool.ruff]

@@ -7,94 +7,86 @@ from src.core import constants as const
 def parse_args():
     # Set default trigger key based on platform
     if platform.system() == "Darwin":  # macOS
-        default_trigger_key = "Key.cmd_r"  # Right Command key
-        default_trigger_desc = "Right Command key (Key.cmd_r)"
-    else:  # Linux and other platforms
-        default_trigger_key = "Key.alt_l"  # Left Alt key
-        default_trigger_desc = "Left Alt key (Key.alt_l)"
+        default_trigger_key = "Key.cmd_r"
+        default_trigger_desc = "Right Command key"
+    else:  # Linux
+        default_trigger_key = "Key.ctrl_r"
+        default_trigger_desc = "Right Ctrl key"
 
     parser = argparse.ArgumentParser(
-        description="Dictation app powered by OpenAI and Groq APIs"
+        description="Dictation app powered by local or cloud-based transcription."
+    )
+    parser.add_argument(
+        "--transcriber",
+        type=str,
+        choices=["openai", "groq", "local"],
+        default="openai",
+        help="Transcription service to use. Default: openai.",
     )
     parser.add_argument(
         "-m",
         "--model-name",
         type=str,
-        default=const.DEFAULT_OPENAI_MODEL,
-        help="""\
-Model to use for transcription.
-For OpenAI: {const.DEFAULT_OPENAI_MODEL}
-For Groq: {const.DEFAULT_GROQ_MODEL}""",
-    )
-    parser.add_argument(
-        "--transcriber",
-        type=str,
-        choices=["openai", "groq"],
-        default="openai",
-        help="""\
-Transcription service to use (default: openai)""",
+        default=None,
+        help=f"""Model to use for transcription.
+If not set, uses default for selected transcriber:
+- openai: {const.DEFAULT_OPENAI_MODEL}
+- groq: {const.DEFAULT_GROQ_MODEL}
+- local: {const.DEFAULT_LOCAL_MODEL}""",
     )
     parser.add_argument(
         "-d",
         "--trigger-key",
         type=str,
         default=default_trigger_key,
-        help=f"""\
-Key to use for triggering recording. Double tap to start, single tap to stop.
-Default: {default_trigger_desc}
-
-For special keys, use Key.name format: Key.cmd_r, Key.alt_r, etc.
-See https://pynput.readthedocs.io/en/latest/keyboard.html#pynput.keyboard.Key for supported keys.""",
+        help=f"""Key to use for triggering recording. Double tap to start, single tap to stop.
+Default: {default_trigger_desc}.
+Use pynput format, e.g., 'Key.alt_l', '<ctrl>+c'.""",
     )
     parser.add_argument(
         "-t",
         "--max-time",
         type=int,
         default=None,
-        help="""\
-Specify the maximum recording time in seconds.
-The app will automatically stop recording after this duration.
-If not specified, recording will continue until manually stopped or file size limit is reached.""",
+        help="Maximum recording time in seconds. Recording stops automatically after this duration.",
     )
     parser.add_argument(
         "-l",
         "--language",
         type=str,
         default="en",
-        help="""\
-Specify the language of the audio for better transcription accuracy.
-If not specified, defaults to English ('en').
-Example: 'en' for English, 'fr' for French, etc.
-
-Supported languages: af, am, ar, as, az, ba, be, bg, bn, bo, br, bs, ca, cs, cy, da, de, el, en, es, et, eu, fa, fi, fo, fr, gl, gu, ha, haw, he, hi, hr, ht, hu, hy, id, is, it, ja, jv, ka, kk, km, kn, ko, la, lb, ln, lo, lt, lv, mg, mi, mk, ml, mn, mr, ms, mt, my, ne, nl, nn, no, oc, pa, pl, ps, pt, ro, ru, sa, sd, si, sk, sl, sn, so, sq, sr, su, sv, sw, ta, te, tg, th, tl, tr, tt, uk, ur, uz, vi, yi, yo, yue, zh""",
+        help="Language of the audio for transcription (e.g., 'en', 'fr', 'th'). Default: 'en'.",
     )
     parser.add_argument(
         "--enable-sounds",
         action="store_true",
         default=False,
-        help="""\
-Enable sound effects for recording actions (start, stop, cancel).
-By default, sound effects are disabled.""",
+        help="Enable sound effects for recording actions (start, stop, cancel).",
     )
     # VAD arguments
     parser.add_argument(
         "--vad",
-        action=argparse.BooleanOptionalAction,  # Creates --vad and --no-vad
-        default=True,  # VAD enabled by default
-        help="""\
-Enable or disable Voice Activity Detection (VAD).
-Default: Enabled (--vad). Use --no-vad to disable.""",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable or disable Voice Activity Detection (VAD). Default: --vad.",
     )
     parser.add_argument(
         "--vad-sensitivity",
         type=int,
         choices=[0, 1, 2, 3],
         default=1,
-        help="""\
-Set the VAD sensitivity. An integer between 0 and 3.
-0 is the least aggressive about filtering out non-speech, 3 is the most aggressive.
-Default: 1 (moderate).""",
+        help="Set VAD sensitivity (0=least aggressive, 3=most aggressive). Default: 1.",
     )
 
     args = parser.parse_args()
+
+    # Set default model name if not provided
+    if args.model_name is None:
+        if args.transcriber == "openai":
+            args.model_name = const.DEFAULT_OPENAI_MODEL
+        elif args.transcriber == "groq":
+            args.model_name = const.DEFAULT_GROQ_MODEL
+        else:  # local
+            args.model_name = const.DEFAULT_LOCAL_MODEL
+
     return args

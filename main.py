@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 import logging
+import os
 import sys
+from pathlib import Path
 
 from src.cli import parse_args
 from src.core.app import App
+from src.core.utils import load_env_from_file
 
 # Set up logging
 logging.basicConfig(
@@ -15,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 
 def main():
+    # Load environment variables. Project-level .env overrides home-level .env
+    load_env_from_file(os.path.join(str(Path.home()), ".env"))
+    load_env_from_file(".env")
+
     try:
         args = parse_args()
         app = App(args)
@@ -23,7 +30,7 @@ def main():
         logger.info("Application terminated by user")
         sys.exit(0)
     except Exception as e:
-        logger.error(f"Application error: {str(e)}")
+        logger.error(f"Application error: {str(e)}", exc_info=True)
         sys.exit(1)
 
 

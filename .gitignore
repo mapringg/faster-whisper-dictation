@@ -3,3 +3,5 @@ __pycache__/
 .aider*
 com.user.dictation.plist
 .env
+build/
+*.egg-info/
