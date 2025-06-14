@@ -1,6 +1,6 @@
 import logging
-import platform  # Added for OS detection
-import subprocess  # Added for pbcopy
+import platform
+import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -19,55 +19,27 @@ KeyboardCallback = Callable[[], None]
 Event = Any  # Type for state machine event
 
 
-class KeyboardReplayer:
-    """Handles typing out transcribed text with rate limiting and error handling."""
-
-    # Class constants from core.constants
-    DEFAULT_TYPING_DELAY = (
-        const.DEFAULT_TYPING_DELAY_SECS
-    )  # Delay between keystrokes in seconds
-    DEFAULT_MAX_RETRIES = const.DEFAULT_MAX_TYPING_RETRIES
-    DEFAULT_RETRY_DELAY = (
-        const.DEFAULT_RETRY_DELAY_SECS
-    )  # Base delay for retries in seconds
+class ClipboardPaster:
+    """Handles pasting transcribed text via the system clipboard."""
 
     def __init__(
         self,
         callback: KeyboardCallback,
         keyboard_controller: Any | None = None,
-        typing_delay: float = DEFAULT_TYPING_DELAY,
-        max_retries: int = DEFAULT_MAX_RETRIES,
-        retry_delay: float = DEFAULT_RETRY_DELAY,
     ):
         """
-        Initialize the replayer with a callback function.
+        Initialize the paster with a callback function.
 
         Args:
-            callback: Function to call after typing is complete
-            keyboard_controller: Optional keyboard controller for dependency injection
-            typing_delay: Delay between keystrokes in seconds
-            max_retries: Maximum number of retry attempts for typing errors
-            retry_delay: Base delay between retry attempts in seconds
+            callback: Function to call after pasting is complete.
+            keyboard_controller: Optional keyboard controller for dependency injection.
         """
         self.callback = callback
-        self.kb = (
-            keyboard_controller or create_keyboard_controller()
-        )  # Use factory by default
-        self.typing_delay = typing_delay
-        self.max_retries = max_retries
-        self.retry_delay = retry_delay
-        self.lock = threading.Lock()  # Thread-safe state management
+        self.kb = keyboard_controller or create_keyboard_controller()
+        self.lock = threading.Lock()
 
     def _validate_segments(self, segments: list[Any]) -> bool:
-        """
-        Validate the transcription segments.
-
-        Args:
-            segments: List of transcription segments
-
-        Returns:
-            bool: True if segments are valid, False otherwise
-        """
+        """Validate the transcription segments."""
         if not isinstance(segments, list):
             logger.error(f"Invalid segments type: {type(segments)}")
             return False
@@ -76,195 +48,106 @@ class KeyboardReplayer:
             if not hasattr(segment, "text") or not isinstance(segment.text, str):
                 logger.error("Segment missing text attribute or text is not a string")
                 return False
-
         return True
 
-    def _type_with_retry(self, char: str) -> bool:
-        """
-        Type a single character with retry mechanism.
+    def _get_full_text(self, segments: list[Any]) -> str:
+        """Concatenates text from segments, removing any leading whitespace."""
+        if not segments:
+            return ""
+        raw_text = "".join(segment.text for segment in segments)
+        return raw_text.lstrip()
 
-        Args:
-            char: Character to type
+    def _copy_to_clipboard(self, text: str):
+        """Copies text to the clipboard using platform-specific commands."""
+        system = platform.system()
+        if system == "Darwin":
+            command = ["pbcopy"]
+            cmd_name = "pbcopy"
+        elif system == "Linux":
+            command = ["xsel", "--clipboard", "--input"]
+            cmd_name = "xsel"
+        else:
+            raise OSError(f"Unsupported platform for clipboard operations: {system}")
 
-        Returns:
-            bool: True if successful, False after max retries
-        """
-        for attempt in range(self.max_retries):
-            try:
-                self.kb.type(char)
-                return True
-            except Exception as e:
-                logger.warning(
-                    f"Error typing character '{char}' (attempt {attempt + 1}): {str(e)}"
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            stdout, stderr = process.communicate(input=text)
+
+            if process.returncode != 0:
+                logger.error(
+                    f"Failed to copy text using {cmd_name}. Stderr: {stderr.strip()}"
                 )
-                if attempt < self.max_retries - 1:
-                    # Use instance variable for retry delay
-                    backoff_delay = self.retry_delay * (attempt + 1)
-                    time.sleep(backoff_delay)
+                raise subprocess.CalledProcessError(
+                    process.returncode, command, stdout, stderr
+                )
 
-        logger.error(
-            f"Failed to type character '{char}' after {self.max_retries} attempts"
-        )
-        return False
+            logger.info(
+                f"Successfully copied {len(text)} characters to clipboard via {cmd_name}."
+            )
+        except FileNotFoundError:
+            logger.error(
+                f"'{cmd_name}' command not found. Please ensure it is installed and in your PATH."
+            )
+            raise
+        except Exception as e:
+            logger.error(f"An unexpected error occurred while using {cmd_name}: {e}")
+            raise
+
+    def _simulate_paste(self):
+        """Simulates the platform-specific paste shortcut (Cmd+V or Ctrl+V)."""
+        system = platform.system()
+        if system == "Darwin":
+            modifier_key = keyboard.Key.cmd
+        elif system == "Linux":
+            modifier_key = keyboard.Key.ctrl
+        else:
+            logger.error(f"Unsupported platform for paste simulation: {system}")
+            return
+
+        try:
+            logger.info("Attempting to paste from clipboard...")
+            with self.kb.pressed(modifier_key):
+                self.kb.press("v")
+                self.kb.release("v")
+            logger.info("Paste command executed.")
+        except Exception as e:
+            logger.error(f"Error simulating paste: {e}")
 
     def replay(self, event: Event) -> None:
         """
-        Handle the text replay process with error handling and rate limiting.
+        Copies the transcribed text to the clipboard and pastes it.
 
         Args:
-            event: State machine event containing transcription segments
+            event: State machine event containing transcription segments.
         """
-        logger.info("Starting text replay...")
+        logger.info("Starting text paste process...")
         segments = event.kwargs.get("segments", [])
 
-        # Validate input segments
         if not self._validate_segments(segments):
-            logger.error("Invalid transcription segments")
+            logger.error("Invalid transcription segments provided.")
+            self.callback()
+            return
+
+        full_text = self._get_full_text(segments)
+
+        if not full_text:
+            logger.warning("No text generated to paste.")
             self.callback()
             return
 
         try:
-            if platform.system() == "Darwin":  # macOS specific logic
-                logger.info("macOS detected, using pbcopy for clipboard output.")
-                full_text = ""
-                is_first_char_overall = True
-                for segment in segments:
-                    for char in segment.text:
-                        # Skip leading space only for the very first character overall
-                        if is_first_char_overall and char == " ":
-                            is_first_char_overall = False
-                            continue
-                        is_first_char_overall = False  # Mark after first non-space char
-                        full_text += char
-
-                if full_text:
-                    try:
-                        # Use subprocess to pipe text to pbcopy
-                        subprocess.run(
-                            ["pbcopy"],
-                            input=full_text,
-                            text=True,
-                            check=True,
-                            capture_output=True,  # Suppress pbcopy output
-                        )
-                        logger.info(
-                            f"Successfully copied {len(full_text)} characters to clipboard."
-                        )
-                        # Add a small delay before pasting
-                        time.sleep(0.1)
-
-                        # Simulate Command + V paste shortcut
-                        try:
-                            logger.info("Attempting to paste from clipboard...")
-                            with self.kb.pressed(keyboard.Key.cmd):
-                                self.kb.press("v")
-                                self.kb.release("v")
-                            logger.info("Paste command executed.")
-                        except Exception as paste_err:
-                            logger.error(f"Error simulating paste: {paste_err}")
-
-                    except subprocess.CalledProcessError as e:
-                        logger.error(
-                            f"Failed to copy text to clipboard using pbcopy: {e}"
-                        )
-                        logger.error(f"pbcopy stderr: {e.stderr}")
-                    except FileNotFoundError:
-                        logger.error(
-                            "pbcopy command not found. Is it installed and in PATH?"
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"An unexpected error occurred while using pbcopy: {e}"
-                        )
-                else:
-                    logger.warning("No text generated to copy to clipboard.")
-
-            else:  # Linux specific logic (using xclip + paste)
-                logger.info("Linux detected, using xclip and paste simulation.")
-                full_text = ""
-                is_first_char_overall = True
-                for segment in segments:
-                    for char in segment.text:
-                        # Skip leading space only for the very first character overall
-                        if is_first_char_overall and char == " ":
-                            is_first_char_overall = False
-                            continue
-                        is_first_char_overall = False  # Mark after first non-space char
-                        full_text += char
-
-                if full_text:
-                    try:
-                        # Use subprocess.Popen for better control over xsel
-                        logger.info(
-                            "Attempting to copy text to clipboard using xsel via Popen..."
-                        )
-                        process = subprocess.Popen(
-                            ["xsel", "--clipboard", "--input"],  # Use xsel command
-                            stdin=subprocess.PIPE,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            text=True,
-                        )
-                        stdout, stderr = process.communicate(input=full_text)
-
-                        if process.returncode == 0:
-                            logger.info(
-                                f"Successfully copied {len(full_text)} characters to clipboard via xsel."
-                            )
-                            # Increase delay slightly before pasting
-                            time.sleep(0.2)
-                        else:
-                            # Raise an error to be caught by the outer exception handler
-                            raise subprocess.CalledProcessError(
-                                process.returncode,
-                                process.args,
-                                stdout,
-                                stderr,  # Keep error details
-                            )
-
-                        # Simulate Control + V paste shortcut (No changes needed here)
-                        try:
-                            logger.info(
-                                "Attempting to paste from clipboard (Ctrl+V)..."
-                            )
-                            # Assuming self.kb maps pynput keys or uses uinput equivalents
-                            # Need to verify UInputController handles this correctly
-                            with self.kb.pressed(
-                                keyboard.Key.ctrl
-                            ):  # Or specific uinput key if needed
-                                self.kb.press("v")
-                                self.kb.release("v")
-                            logger.info("Paste command (Ctrl+V) executed.")
-                        except AttributeError:
-                            logger.error(
-                                "Keyboard controller does not support 'pressed' context manager or required keys (Ctrl/V). Paste simulation failed."
-                            )
-                        except Exception as paste_err:
-                            logger.error(
-                                f"Error simulating paste (Ctrl+V): {paste_err}"
-                            )
-
-                    except subprocess.CalledProcessError as e:
-                        logger.error(
-                            f"Failed to copy text to clipboard using xsel: {e}"
-                        )
-                        logger.error(f"xsel stderr: {e.stderr}")
-                        logger.error(f"xsel stdout: {e.stdout}")
-                    except FileNotFoundError:
-                        logger.error(
-                            "xsel command not found. Please install xsel for clipboard functionality on Linux."
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"An unexpected error occurred while using xsel: {e}"
-                        )
-                else:
-                    logger.warning("No text generated to copy to clipboard.")
-
+            self._copy_to_clipboard(full_text)
+            time.sleep(0.2)  # A small delay for the clipboard to update.
+            self._simulate_paste()
         except Exception as e:
-            logger.error(f"Unexpected error during text replay: {str(e)}")
+            logger.error(f"Failed to complete paste process: {e}")
         finally:
-            # This callback needs to be called regardless of the method (typing/copying)
             self.callback()
 
 

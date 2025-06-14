@@ -9,7 +9,7 @@ import numpy as np
 from pynput import keyboard
 
 from ..core.utils import loadwav, playsound
-from ..services.input_handler import DoubleKeyListener, KeyboardReplayer
+from ..services.input_handler import ClipboardPaster, DoubleKeyListener
 from ..services.recorder import Recorder
 from ..services.status_indicator import (
     StatusIcon,
@@ -99,7 +99,7 @@ class App:
                 self.m.finish_transcribing, args.model_name
             )
 
-        self.replayer = KeyboardReplayer(self.m.finish_replaying)
+        self.replayer = ClipboardPaster(self.m.finish_replaying)
 
         # Initialize status icon with lock protection
         with self.status_icon_lock:
