@@ -115,9 +115,8 @@ class DoubleKeyListener:
         if (current_time - self.last_press_time) < self.double_click_threshold:
             self.activate_callback()
             self.last_press_time = 0  # Reset to prevent triple-click acting as single
-        else:
-            self.deactivate_callback()
-
+            return
+        self.deactivate_callback()
         self.last_press_time = current_time
 
     def run(self):

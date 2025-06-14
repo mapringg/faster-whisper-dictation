@@ -21,7 +21,7 @@ This document outlines the requirements for migrating the application's Linux su
 ## 4. Functional Requirements
 
 1.  The system **must** use `wl-clipboard` to copy and paste text on Linux.
-2.  The system **must** rely on `ydotool` for listening to the user-defined global hotkey for starting and stopping dictation.
+2.  The system **must** rely on `ydotool` (which generally requires uinput/root access) for listening to the user-defined global hotkey for starting and stopping dictation.  Installation instructions **must** cover the required permissions (e.g., `sudo setcap 'cap_uinput,cap_dac_read_search,cap_sys_nice+eip' $(which ydotool)`).
 3.  The `setup.sh` script **must** check if the current session is a Wayland session.
 4.  If the session is **not** Wayland, the `setup.sh` script **must** fail and output an error message informing the user that only Wayland is supported.
 5.  The core application logic (start recording, stop recording, transcribe, paste) **must** function identically to the previous X11 implementation from a user's perspective.

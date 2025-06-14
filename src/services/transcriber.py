@@ -77,10 +77,10 @@ class APITranscriber(BaseTranscriber):
             logger.info(f"{self.__class__.__name__} aiohttp session closed.")
 
     async def transcribe(self, event: Any):
-        audio_data = event.kwargs.get("audio_data")
-        language = event.kwargs.get("language")
-
+        audio_data = None
         try:
+            audio_data = event.kwargs.get("audio_data")
+            language = event.kwargs.get("language")
             success, result = await self._make_api_request(audio_data, language)
             if success:
                 segments = [Segment(result.get("text", ""))]
@@ -123,7 +123,28 @@ class APITranscriber(BaseTranscriber):
                     if response.status == 401:
                         return False, f"Invalid API key for {self.__class__.__name__}"
                     if response.status == 429:  # Rate limit
-                        await asyncio.sleep(const.API_INITIAL_RETRY_DELAY_SECS)
+                        sleep_duration = None
+                        retry_after = response.headers.get("Retry-After")
+                        if retry_after:
+                            try:
+                                sleep_duration = int(retry_after)
+                                logger.info(
+                                    f"Rate limited. Retrying after {sleep_duration}s (from Retry-After header)."
+                                )
+                            except ValueError:
+                                logger.warning(
+                                    f"Invalid Retry-After header: '{retry_after}'. Using exponential backoff."
+                                )
+
+                        if sleep_duration is None:
+                            sleep_duration = const.API_INITIAL_RETRY_DELAY_SECS * (
+                                2**attempt
+                            )
+                            logger.info(
+                                f"Rate limited. Retrying in {sleep_duration:.2f}s (exponential backoff)."
+                            )
+
+                        await asyncio.sleep(sleep_duration)
                         continue
                     # Other client/server errors
                     return False, f"API Error: {response.status}"
@@ -167,10 +188,11 @@ class LocalTranscriber(BaseTranscriber):
             raise
 
     async def transcribe(self, event: Any):
-        audio_data = event.kwargs.get("audio_data")
-        language = event.kwargs.get("language")
-
+        audio_data = None
         try:
+            audio_data = event.kwargs.get("audio_data")
+            language = event.kwargs.get("language")
+
             # Run blocking transcription in a separate thread
             full_text = await asyncio.to_thread(
                 self._do_transcription, audio_data, language

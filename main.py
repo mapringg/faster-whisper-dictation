@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 def main():
     # Load environment variables. Project-level .env overrides home-level .env
     load_env_from_file(os.path.join(str(Path.home()), ".env"))
-    load_env_from_file(".env")
+    project_env = Path(__file__).resolve().parent / ".env"
+    load_env_from_file(project_env)
 
     try:
         args = parse_args()

@@ -7,15 +7,15 @@ dependencies = [
     "pynput>=1.7.8",
     "PyGObject==3.50.0; platform_system == 'Linux'",
     "keyboard",
-    "argparse",
     "transitions",
     "numpy",
     "sounddevice",
     "soundfile",
     "pystray",
-    "webrtcvad; platform_system != 'Windows'",
-    "aiohttp",
-    "faster-whisper",
+    "Pillow",
+    "webrtcvad-wheels>=2.0.14,<3.0.0; platform_system != 'Windows'",
+    "aiohttp>=3.9.5,<4.0.0",
+    "faster-whisper>=1.0.2,<2.0.0",
 ]
 
 [project.optional-dependencies]

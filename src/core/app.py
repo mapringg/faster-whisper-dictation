@@ -143,7 +143,7 @@ class App:
         audio_data = event.kwargs.get("audio_data")
         if not audio_data or audio_data.getbuffer().nbytes == 0:
             logger.error("No audio data to transcribe.")
-            self._handle_error()
+            await self._handle_error()
             return
 
         with self.status_icon_lock:
@@ -153,18 +153,18 @@ class App:
     def _on_enter_replaying(self, event: Any):
         if event.kwargs.get("error"):
             logger.error(f"Transcription failed: {event.kwargs['error']}")
-            self._handle_error()
+            asyncio.run_coroutine_threadsafe(self._handle_error(), self.async_loop)
         else:
             with self.status_icon_lock:
                 self.status_icon.update_state(StatusIconState.REPLAYING)
             self.replayer.replay(event)
 
-    def _handle_error(self):
+    async def _handle_error(self):
         """Visually indicate an error and return to READY state."""
         self.beep("error_sound", wait=False)
         with self.status_icon_lock:
             self.status_icon.update_state(StatusIconState.ERROR)
-        time.sleep(1.5)
+        await asyncio.sleep(1.5)
         self.m.to_READY()
 
     def _can_change_state(self) -> bool:
@@ -231,7 +231,7 @@ class App:
             )
         except Exception as e:
             logger.error(f"Error changing transcriber: {e}")
-            self._handle_error()
+            asyncio.run_coroutine_threadsafe(self._handle_error(), self.async_loop)
 
     def _create_transcriber(self, transcriber_id: str, model_name: str):
         transcriber_map = {

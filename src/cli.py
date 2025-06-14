@@ -9,9 +9,11 @@ def parse_args():
     if platform.system() == "Darwin":  # macOS
         default_trigger_key = "Key.cmd_r"
         default_trigger_desc = "Right Command key"
-    else:  # Linux
+    elif platform.system() == "Linux":
         default_trigger_key = "Key.ctrl_r"
         default_trigger_desc = "Right Ctrl key"
+    else:
+        raise RuntimeError("Unsupported OS – only macOS and Linux are supported.")
 
     parser = argparse.ArgumentParser(
         description="Dictation app powered by local or cloud-based transcription."
