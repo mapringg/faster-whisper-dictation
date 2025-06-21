@@ -200,7 +200,7 @@ class App:
                 self.timer = None
             self.recorder.stop()
             self.beep("cancel_recording", wait=False)
-            self.m.to_READY()
+            self.m.cancel_recording()
 
     def _toggle_sounds(self, enabled: bool):
         with self.config_lock:

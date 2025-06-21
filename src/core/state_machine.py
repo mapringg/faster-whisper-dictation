@@ -23,6 +23,7 @@ transitions = [
         "dest": States.REPLAYING,
     },
     {"trigger": "finish_replaying", "source": States.REPLAYING, "dest": States.READY},
+    {"trigger": "cancel_recording", "source": States.RECORDING, "dest": States.READY},
 ]
 
 
