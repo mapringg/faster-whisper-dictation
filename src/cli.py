@@ -22,8 +22,8 @@ def parse_args():
         "--transcriber",
         type=str,
         choices=["openai", "groq", "local"],
-        default="openai",
-        help="Transcription service to use. Default: openai.",
+        default=const.DEFAULT_TRANSCRIBER,
+        help=f"Transcription service to use. Default: {const.DEFAULT_TRANSCRIBER}.",
     )
     parser.add_argument(
         "-m",
