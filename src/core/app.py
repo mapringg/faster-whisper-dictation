@@ -7,7 +7,6 @@ import threading
 import time
 from typing import Any
 
-import numpy as np
 from pynput import keyboard
 
 from ..core.utils import loadwav, playsound
@@ -244,7 +243,7 @@ class App:
             raise ValueError(f"Unknown transcriber: {transcriber_id}")
         return cls(self.m.finish_transcribing, model_name)
 
-    def _load_sound_effects(self) -> dict[str, np.ndarray | None]:
+    def _load_sound_effects(self) -> dict[str, Any]:
         sounds = {
             "start_recording": loadwav(const.SOUND_PATH_START),
             "finish_recording": loadwav(const.SOUND_PATH_FINISH),
@@ -257,7 +256,8 @@ class App:
         with self.config_lock:
             if not self.args.enable_sounds:
                 return
-        if sound := self.SOUND_EFFECTS.get(sound_name):
+        sound = self.SOUND_EFFECTS.get(sound_name)
+        if sound is not None:
             playsound(sound, wait)
         else:
             logger.warning(f"Sound not found: {sound_name}")
