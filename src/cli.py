@@ -10,8 +10,10 @@ def parse_args():
         default_trigger_key = "Key.cmd_r"
         default_trigger_desc = "Right Command key"
     elif platform.system() == "Linux":
-        default_trigger_key = "Key.ctrl_r"
-        default_trigger_desc = "Right Ctrl key"
+        default_trigger_key = (
+            "Key.ctrl_r"  # Back to right ctrl, but will accept either side
+        )
+        default_trigger_desc = "Right Ctrl key (or Left Ctrl on Linux)"
     else:
         raise RuntimeError("Unsupported OS – only macOS and Linux are supported.")
 

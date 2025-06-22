@@ -51,9 +51,9 @@ The application runs as a background service with a status icon in the system tr
 
 | Action               | macOS Hotkey          | Linux Hotkey    |
 | -------------------- | --------------------- | --------------- |
-| **Start Recording**  | Double-press `Right ⌘` | Double-press `Right Ctrl` |
-| **Stop Recording**   | Single-press `Right ⌘` | Single-press `Right Ctrl` |
-| **Cancel Recording** | Double-press `Right ⌥` | Double-press `Right Alt`  |
+| **Start Recording**  | Double-press `Right ⌘` | Double-press `Ctrl` (either side) |
+| **Stop Recording**   | Single-press `Right ⌘` | Single-press `Ctrl` (either side) |
+| **Cancel Recording** | Double-press `Right ⌥` | Double-press `Alt` (either side)  |
 
 Your speech is automatically transcribed, copied to the clipboard, and pasted at your cursor's current position.
 

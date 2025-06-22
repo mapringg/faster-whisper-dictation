@@ -57,8 +57,10 @@ class App:
             self.cancel_key = keyboard.Key.alt_r
             self.cancel_key_name = "Right Option"
         else:  # Linux
-            self.cancel_key = keyboard.Key.alt_r
-            self.cancel_key_name = "Right Alt"
+            self.cancel_key = (
+                keyboard.Key.alt_r
+            )  # Back to right alt, but will accept either side
+            self.cancel_key_name = "Right Alt key (or Left Alt on Linux)"
 
     def _setup_status_icon(self) -> StatusIcon:
         icon = StatusIcon(on_exit=self._exit_app)
@@ -264,8 +266,11 @@ class App:
 
     def _normalize_key(self, key_str: str) -> Any:
         if key_str.startswith("Key."):
-            return getattr(keyboard.Key, key_str.split(".")[1])
-        return keyboard.HotKey.parse(key_str)[0]
+            key_name = key_str.split(".")[1]
+            key = getattr(keyboard.Key, key_name)
+            return key
+        key = keyboard.HotKey.parse(key_str)[0]
+        return key
 
     def _setup_key_listeners(self) -> tuple[DoubleKeyListener, DoubleKeyListener]:
         trigger_key = self._normalize_key(self.args.trigger_key)

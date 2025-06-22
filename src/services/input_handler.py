@@ -108,9 +108,28 @@ class DoubleKeyListener:
         self.shutdown_event = threading.Event()
 
     def on_press(self, key: Any):
-        if key != self.key:
+        # Check for exact match first
+        if key == self.key:
+            self._handle_key_press()
             return
 
+        # On Linux, also accept the left version of right modifier keys
+        if (
+            platform.system() == "Linux"
+            and hasattr(key, "name")
+            and hasattr(self.key, "name")
+        ):
+            if (self.key.name == "ctrl_r" and key.name == "ctrl") or (
+                self.key.name == "alt_r" and key.name == "alt"
+            ):
+                self._handle_key_press()
+                return
+
+        # No match found
+        return
+
+    def _handle_key_press(self):
+        """Handle the key press logic once a match is found."""
         current_time = time.time()
         if (current_time - self.last_press_time) < self.double_click_threshold:
             self.activate_callback()
