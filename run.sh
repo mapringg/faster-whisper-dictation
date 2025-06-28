@@ -67,7 +67,7 @@ if [[ "$(uname)" == "Darwin" ]]; then
         exit 1
     fi
 elif [[ "$(uname)" == "Linux" ]]; then
-    if ! python -c "import sounddevice; import soundfile; import uinput" 2>/dev/null; then
+    if ! python -c "import sounddevice; import soundfile;" 2>/dev/null; then
         log "Error: Required Python packages are missing"
         log "Please run setup.sh to install the required packages"
         exit 1
