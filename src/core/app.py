@@ -57,10 +57,8 @@ class App:
             self.cancel_key = keyboard.Key.alt_r
             self.cancel_key_name = "Right Option"
         else:  # Linux
-            self.cancel_key = (
-                keyboard.Key.alt_r
-            )  # Back to right alt, but will accept either side
-            self.cancel_key_name = "Right Alt key (or Left Alt on Linux)"
+            self.cancel_key = self._normalize_key(self.args.cancel_key)
+            self.cancel_key_name = self.args.cancel_key
 
     def _setup_status_icon(self) -> StatusIcon:
         icon = StatusIcon(on_exit=self._exit_app)
@@ -122,7 +120,7 @@ class App:
     def _on_enter_ready(self, event: Any):
         logger.info(
             f"Ready. Double tap '{self.args.trigger_key}' to start. "
-            f"Double tap '{self.cancel_key_name}' to cancel."
+            f"Double tap '{self.args.cancel_key}' to cancel."
         )
         with self.status_icon_lock:
             self.status_icon.update_state(StatusIconState.READY)

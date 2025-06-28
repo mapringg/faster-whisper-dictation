@@ -9,11 +9,13 @@ def parse_args():
     if platform.system() == "Darwin":  # macOS
         default_trigger_key = "Key.cmd_r"
         default_trigger_desc = "Right Command key"
+        default_cancel_key = "Key.alt_r"
+        default_cancel_desc = "Right Option key"
     elif platform.system() == "Linux":
-        default_trigger_key = (
-            "Key.ctrl_r"  # Back to right ctrl, but will accept either side
-        )
-        default_trigger_desc = "Right Ctrl key (or Left Ctrl on Linux)"
+        default_trigger_key = "Key.delete"
+        default_trigger_desc = "Delete key"
+        default_cancel_key = "Key.esc"
+        default_cancel_desc = "Escape key"
     else:
         raise RuntimeError("Unsupported OS – only macOS and Linux are supported.")
 
@@ -43,9 +45,13 @@ If not set, uses default for selected transcriber:
         "--trigger-key",
         type=str,
         default=default_trigger_key,
-        help=f"""Key to use for triggering recording. Double tap to start, single tap to stop.
-Default: {default_trigger_desc}.
-Use pynput format, e.g., 'Key.alt_l', '<ctrl>+c'.""",
+        help=f"""Key to use for triggering recording. Double tap to start, single tap to stop.\nDefault: {default_trigger_desc}.\nUse pynput format, e.g., 'Key.alt_l', '<ctrl>+c'.""",
+    )
+    parser.add_argument(
+        "--cancel-key",
+        type=str,
+        default=default_cancel_key,
+        help=f"Key to use for cancelling recording. Double tap to cancel. Default: {default_cancel_desc}. Use pynput format, e.g., 'Key.esc'.",
     )
     parser.add_argument(
         "-t",

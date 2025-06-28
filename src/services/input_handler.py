@@ -113,18 +113,6 @@ class DoubleKeyListener:
             self._handle_key_press()
             return
 
-        # On Linux, also accept the left version of right modifier keys
-        if (
-            platform.system() == "Linux"
-            and hasattr(key, "name")
-            and hasattr(self.key, "name")
-        ):
-            if (self.key.name == "ctrl_r" and key.name == "ctrl") or (
-                self.key.name == "alt_r" and key.name == "alt"
-            ):
-                self._handle_key_press()
-                return
-
         # No match found
         return
 
