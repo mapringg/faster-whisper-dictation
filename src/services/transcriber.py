@@ -1,7 +1,9 @@
 import asyncio
+import gc
 import io
 import logging
 import os
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
@@ -14,6 +16,47 @@ from faster_whisper import WhisperModel
 from ..core import constants as const
 
 logger = logging.getLogger(__name__)
+
+# Global model cache to avoid reloading models
+_model_cache = {}
+_model_cache_lock = threading.Lock()
+
+
+def get_cached_model(
+    model_name: str, device: str = "cpu", compute_type: str = "int8"
+) -> WhisperModel:
+    """Get a cached WhisperModel instance or create a new one if not cached."""
+    cache_key = f"{model_name}_{device}_{compute_type}"
+    with _model_cache_lock:
+        if cache_key not in _model_cache:
+            logger.info(
+                f"Loading faster-whisper model: '{model_name}' (device: {device}, compute_type: {compute_type})"
+            )
+            _model_cache[cache_key] = WhisperModel(
+                model_name, device=device, compute_type=compute_type
+            )
+            logger.info(
+                f"Faster-whisper model '{model_name}' loaded and cached successfully."
+            )
+        else:
+            logger.info(f"Using cached faster-whisper model: '{model_name}'")
+        return _model_cache[cache_key]
+
+
+def clear_model_cache():
+    """Clear all cached models and free memory."""
+    global _model_cache
+    with _model_cache_lock:
+        if _model_cache:
+            logger.info("Clearing model cache...")
+            # Create a copy of keys to avoid dictionary changed size during iteration
+            cache_keys = list(_model_cache.keys())
+            for cache_key in cache_keys:
+                logger.info(f"Unloading cached model: {cache_key}")
+                del _model_cache[cache_key]
+            _model_cache.clear()
+            gc.collect()
+            logger.info("Model cache cleared successfully.")
 
 
 class Segment:
@@ -58,12 +101,19 @@ class APITranscriber(BaseTranscriber):
     API_ENDPOINT = ""
     API_KEY_ENV_VAR = ""
 
-    def __init__(self, callback: Callable, model: str):
+    def __init__(
+        self,
+        callback: Callable,
+        model: str,
+        session: aiohttp.ClientSession | None = None,
+    ):
         super().__init__(callback, model)
         self.api_key = os.environ.get(self.API_KEY_ENV_VAR)
         if not self.api_key:
             raise ValueError(f"{self.API_KEY_ENV_VAR} environment variable not set.")
-        self._session: aiohttp.ClientSession | None = None
+        self._session = session
+        # Track whether we own the session (for cleanup)
+        self._owns_session = session is None
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -72,7 +122,8 @@ class APITranscriber(BaseTranscriber):
         return self._session
 
     async def close(self):
-        if self._session and not self._session.closed:
+        # Only close session if we created it ourselves (not shared)
+        if self._session and not self._session.closed and self._owns_session:
             await self._session.close()
             logger.info(f"{self.__class__.__name__} aiohttp session closed.")
 
@@ -178,11 +229,9 @@ class LocalTranscriber(BaseTranscriber):
     def __init__(self, callback: Callable, model: str):
         super().__init__(callback, model)
         try:
-            logger.info(f"Loading faster-whisper model: '{self.model}'")
-            self.whisper_model = WhisperModel(
+            self.whisper_model = get_cached_model(
                 self.model, device="cpu", compute_type="int8"
             )
-            logger.info("Faster-whisper model loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to load faster-whisper model: {e}")
             raise
@@ -222,8 +271,6 @@ class LocalTranscriber(BaseTranscriber):
         return "".join(segment.text for segment in segments)
 
     async def close(self):
-        logger.info("Unloading faster-whisper model.")
-        del self.whisper_model
-        import gc
-
-        gc.collect()
+        logger.info("LocalTranscriber closed (model remains cached).")
+        # Don't delete the model here as it's cached and shared
+        # Model cleanup is handled by clear_model_cache() on application exit

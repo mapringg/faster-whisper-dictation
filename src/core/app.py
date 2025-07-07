@@ -7,10 +7,15 @@ import threading
 import time
 from typing import Any
 
+import aiohttp
 from pynput import keyboard
 
 from ..core.utils import loadwav, playsound
-from ..services.input_handler import ClipboardPaster, DoubleKeyListener
+from ..services.input_handler import (
+    ClipboardPaster,
+    ConsolidatedKeyListener,
+    DoubleKeyListener,
+)
 from ..services.recorder import Recorder
 from ..services.status_indicator import (
     StatusIcon,
@@ -21,8 +26,10 @@ from ..services.transcriber import (
     GroqTranscriber,
     LocalTranscriber,
     OpenAITranscriber,
+    clear_model_cache,
 )
 from . import constants as const
+from .config import AppConfig
 from .state_machine import create_state_machine
 
 logger = logging.getLogger(__name__)
@@ -32,19 +39,23 @@ class App:
     """Main application class that manages the dictation workflow."""
 
     def __init__(self, args: argparse.Namespace):
-        self.args = args
+        self.config = AppConfig.from_args(args)
         self.shutdown_event = threading.Event()
-        self.config_lock = threading.Lock()
         self.status_icon_lock = threading.Lock()
         self.timer: threading.Timer | None = None
         self.last_state_change = 0
-        self.state_change_delay = 0.5  # seconds
+        self.state_change_delay = const.STATE_CHANGE_DELAY_SECS
+
+        # Initialize api_session as None, will be created in async context
+        self.api_session: aiohttp.ClientSession | None = None
 
         self._configure_platform_keys()
         self.m = create_state_machine()
         self.status_icon = self._setup_status_icon()
         self.recorder = self._setup_recorder()
-        self.transcriber = self._create_transcriber(args.transcriber, args.model_name)
+        self.transcriber = self._create_transcriber(
+            self.config.transcriber, self.config.model_name
+        )
         self.replayer = ClipboardPaster(self.m.finish_replaying)
         self.SOUND_EFFECTS = self._load_sound_effects()
 
@@ -57,21 +68,21 @@ class App:
             self.cancel_key = keyboard.Key.alt_r
             self.cancel_key_name = "Right Option"
         else:  # Linux
-            self.cancel_key = self._normalize_key(self.args.cancel_key)
-            self.cancel_key_name = self.args.cancel_key
+            self.cancel_key = self._normalize_key(self.config.cancel_key)
+            self.cancel_key_name = self.config.cancel_key
 
     def _setup_status_icon(self) -> StatusIcon:
         icon = StatusIcon(on_exit=self._exit_app)
-        icon.set_sound_toggle_callback(self._toggle_sounds, self.args.enable_sounds)
-        icon.set_language_callback(self._change_language, self.args.language)
-        icon.set_transcriber_callback(self._change_transcriber, self.args.transcriber)
+        icon.set_sound_toggle_callback(self._toggle_sounds, self.config.enable_sounds)
+        icon.set_language_callback(self._change_language, self.config.language)
+        icon.set_transcriber_callback(self._change_transcriber, self.config.transcriber)
         return icon
 
     def _setup_recorder(self) -> Recorder:
         return Recorder(
             self.m.finish_recording,
-            vad_enabled=self.args.vad,
-            vad_sensitivity=self.args.vad_sensitivity,
+            vad_enabled=self.config.vad,
+            vad_sensitivity=self.config.vad_sensitivity,
         )
 
     def _setup_state_machine_callbacks(self):
@@ -84,10 +95,18 @@ class App:
         logger.info("Starting asyncio event loop.")
         asyncio.set_event_loop(self.async_loop)
         try:
+            # Schedule session creation as a task
+            self.async_loop.create_task(self._create_api_session())
             self.async_loop.run_forever()
         finally:
             self.async_loop.close()
             logger.info("Asyncio event loop closed.")
+
+    async def _create_api_session(self):
+        """Create the shared HTTP session in the async context."""
+        timeout = aiohttp.ClientTimeout(total=const.API_REQUEST_TIMEOUT_SECS)
+        self.api_session = aiohttp.ClientSession(timeout=timeout)
+        logger.info("Shared API session created.")
 
     def run(self) -> None:
         """Main application entry point."""
@@ -119,8 +138,8 @@ class App:
 
     def _on_enter_ready(self, event: Any):
         logger.info(
-            f"Ready. Double tap '{self.args.trigger_key}' to start. "
-            f"Double tap '{self.args.cancel_key}' to cancel."
+            f"Ready. Double tap '{self.config.trigger_key}' to start. "
+            f"Double tap '{self.config.cancel_key}' to cancel."
         )
         with self.status_icon_lock:
             self.status_icon.update_state(StatusIconState.READY)
@@ -145,6 +164,14 @@ class App:
             await self._handle_error()
             return
 
+        # Ensure API session is created for API transcribers
+        if not self.api_session and hasattr(self.transcriber, "_session"):
+            await self._create_api_session()
+            # Update transcriber with the new session
+            if hasattr(self.transcriber, "_session") and not self.transcriber._session:
+                self.transcriber._session = self.api_session
+                self.transcriber._owns_session = False
+
         with self.status_icon_lock:
             self.status_icon.update_state(StatusIconState.TRANSCRIBING)
         await self.transcriber.transcribe(event)
@@ -163,7 +190,7 @@ class App:
         self.beep("error_sound", wait=False)
         with self.status_icon_lock:
             self.status_icon.update_state(StatusIconState.ERROR)
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(const.ERROR_STATE_DISPLAY_DURATION_SECS)
         self.m.to_READY()
 
     def _can_change_state(self) -> bool:
@@ -177,11 +204,10 @@ class App:
     def start(self):
         if self.m.is_READY() and self._can_change_state():
             self.beep("start_recording")
-            if self.args.max_time:
-                self.timer = threading.Timer(self.args.max_time, self.stop)
+            if self.config.max_time:
+                self.timer = threading.Timer(self.config.max_time, self.stop)
                 self.timer.start()
-            with self.config_lock:
-                self.m.start_recording(language=self.args.language)
+            self.m.start_recording(language=self.config.language)
 
     def stop(self):
         if self.m.is_RECORDING() and self._can_change_state():
@@ -202,29 +228,37 @@ class App:
             self.m.to_READY()
 
     def _toggle_sounds(self, enabled: bool):
-        with self.config_lock:
-            self.args.enable_sounds = enabled
-        logger.info(f"Sound effects {'enabled' if enabled else 'disabled'}.")
+        self.config.set_enable_sounds(enabled)
 
     def _change_language(self, lang_code: str):
-        with self.config_lock:
-            self.args.language = lang_code
-        logger.info(f"Language changed to: {lang_code}.")
+        self.config.set_language(lang_code)
 
     def _change_transcriber(self, transcriber_id: str):
         try:
-            with self.config_lock:
-                # Close existing async transcriber
-                if hasattr(self.transcriber, "close") and self.async_loop.is_running():
-                    future = asyncio.run_coroutine_threadsafe(
-                        self.transcriber.close(), self.async_loop
-                    )
-                    future.result(timeout=5)
+            # Close existing async transcriber
+            if hasattr(self.transcriber, "close") and self.async_loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(
+                    self.transcriber.close(), self.async_loop
+                )
+                future.result(timeout=const.TRANSCRIBER_CLOSE_TIMEOUT_SECS)
 
-                model_name = getattr(const, f"DEFAULT_{transcriber_id.upper()}_MODEL")
-                self.transcriber = self._create_transcriber(transcriber_id, model_name)
-                self.args.transcriber = transcriber_id
-                self.args.model_name = model_name
+            model_name = getattr(const, f"DEFAULT_{transcriber_id.upper()}_MODEL")
+
+            # Create the new transcriber
+            self.transcriber = self._create_transcriber(transcriber_id, model_name)
+
+            # If it's an API transcriber and we have a session, ensure it's properly set
+            if (
+                transcriber_id in ["openai", "groq"]
+                and hasattr(self.transcriber, "_session")
+                and self.api_session
+                and not self.api_session.closed
+            ):
+                self.transcriber._session = self.api_session
+                self.transcriber._owns_session = False
+
+            self.config.set_transcriber(transcriber_id)
+            self.config.set_model_name(model_name)
             logger.info(
                 f"Transcriber changed to {transcriber_id} with model {model_name}."
             )
@@ -241,7 +275,13 @@ class App:
         cls = transcriber_map.get(transcriber_id)
         if not cls:
             raise ValueError(f"Unknown transcriber: {transcriber_id}")
-        return cls(self.m.finish_transcribing, model_name)
+
+        # Pass session to API transcribers, local transcriber doesn't need it
+        # Note: api_session may be None during initialization, that's handled by APITranscriber
+        if transcriber_id in ["openai", "groq"]:
+            return cls(self.m.finish_transcribing, model_name, self.api_session)
+        else:
+            return cls(self.m.finish_transcribing, model_name)
 
     def _load_sound_effects(self) -> dict[str, Any]:
         sounds = {
@@ -253,9 +293,8 @@ class App:
         return sounds
 
     def beep(self, sound_name: str, wait: bool = True):
-        with self.config_lock:
-            if not self.args.enable_sounds:
-                return
+        if not self.config.get_enable_sounds():
+            return
         sound = self.SOUND_EFFECTS.get(sound_name)
         if sound is not None:
             playsound(sound, wait)
@@ -271,18 +310,24 @@ class App:
         return key
 
     def _setup_key_listeners(self) -> tuple[DoubleKeyListener, DoubleKeyListener]:
-        trigger_key = self._normalize_key(self.args.trigger_key)
-        key_listener = DoubleKeyListener(self.start, self.stop, trigger_key)
-        cancel_listener = DoubleKeyListener(
-            self.cancel_recording, lambda: None, self.cancel_key
+        trigger_key = self._normalize_key(self.config.trigger_key)
+
+        # Create consolidated key listener that handles both keys
+        unified_listener = ConsolidatedKeyListener(
+            trigger_key=trigger_key,
+            trigger_activate=self.start,
+            trigger_deactivate=self.stop,
+            cancel_key=self.cancel_key,
+            cancel_activate=self.cancel_recording,
+            cancel_deactivate=lambda: None,
+            shutdown_event=self.shutdown_event,
         )
 
-        key_listener.shutdown_event = self.shutdown_event
-        cancel_listener.shutdown_event = self.shutdown_event
+        # Start single thread for both listeners
+        threading.Thread(target=unified_listener.run, daemon=True).start()
 
-        threading.Thread(target=key_listener.run, daemon=True).start()
-        threading.Thread(target=cancel_listener.run, daemon=True).start()
-        return key_listener, cancel_listener
+        # Return compatibility objects
+        return unified_listener, unified_listener
 
     def signal_handler(self, signum, frame):
         logger.warning(f"Received signal {signum}. Initiating shutdown...")
@@ -304,17 +349,37 @@ class App:
         if self.m.is_RECORDING():
             self.recorder.stop()
 
+        # Clean up recorder worker thread
+        if hasattr(self.recorder, "cleanup"):
+            self.recorder.cleanup()
+
         if self.async_loop.is_running():
             if hasattr(self.transcriber, "close"):
                 future = asyncio.run_coroutine_threadsafe(
                     self.transcriber.close(), self.async_loop
                 )
                 try:
-                    future.result(timeout=2)
+                    future.result(timeout=const.TRANSCRIBER_CLEANUP_TIMEOUT_SECS)
                 except Exception as e:
                     logger.warning(f"Transcriber did not close cleanly: {e}")
+
+            # Close shared API session
+            if self.api_session and not self.api_session.closed:
+                future = asyncio.run_coroutine_threadsafe(
+                    self.api_session.close(), self.async_loop
+                )
+                try:
+                    future.result(timeout=const.TRANSCRIBER_CLEANUP_TIMEOUT_SECS)
+                    logger.info("Shared API session closed.")
+                except Exception as e:
+                    logger.warning(f"API session did not close cleanly: {e}")
+
             self.async_loop.call_soon_threadsafe(self.async_loop.stop)
 
         if self.async_thread.is_alive():
-            self.async_thread.join(timeout=2)
+            self.async_thread.join(timeout=const.ASYNC_THREAD_JOIN_TIMEOUT_SECS)
+
+        # Clear model cache on application exit
+        clear_model_cache()
+
         logger.info("Resource cleanup completed.")

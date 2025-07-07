@@ -183,7 +183,7 @@ class StatusIcon:
         self.update_state(StatusIconState.TRANSCRIBING)  # Use as "busy" indicator
         time.sleep(0.1)  # allow UI to update
         refresh_devices()
-        time.sleep(0.5)
+        time.sleep(const.DEVICE_REFRESH_DELAY_SECS)
         self.update_state(original_state)
 
     def _select_transcriber(self, transcriber_id: str):
