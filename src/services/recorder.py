@@ -1,5 +1,6 @@
 import io
 import logging
+import queue
 import threading
 from contextlib import contextmanager
 
@@ -57,6 +58,9 @@ class Recorder:
                 self.persistent_stream_error = True
             yield None
         finally:
+            # Stop VAD worker thread first
+            self._stop_vad_worker()
+
             # Always clean up the stream
             if stream is not None:
                 try:
@@ -94,6 +98,11 @@ class Recorder:
         self.lock = threading.Lock()  # Thread-safe state management
         self.audio_buffer = None
         self.accumulated_audio_data = []
+
+        # Lock-free queue for audio data from callback to worker thread
+        self.audio_queue = queue.Queue()
+        self.vad_worker_thread = None
+        self.vad_worker_stop_event = threading.Event()
 
         # Stream error tracking
         self.stream_error_count = 0
@@ -150,6 +159,8 @@ class Recorder:
                 logger.info("Audio buffer exists when stopping recording")
             else:
                 logger.warning("Audio buffer is None when stopping recording")
+        # Stop VAD worker thread
+        self._stop_vad_worker()
         # Stream cleanup is handled by the context manager
 
     def _cleanup_previous_session(self) -> None:
@@ -240,43 +251,18 @@ class Recorder:
                                 )
                                 callback.first_data_logged = True
 
+                            # Send audio data to worker thread via queue (non-blocking)
                             if self.vad_enabled:
-                                # Convert float32 to int16
+                                # Convert float32 to int16 and send to VAD worker
                                 audio_int16 = (indata * 32767).astype(np.int16)
-                                self.vad_buffer.extend(audio_int16.tobytes())
-
-                                while len(self.vad_buffer) >= self.vad_frame_size:
-                                    frame_bytes = self.vad_buffer[: self.vad_frame_size]
-                                    del self.vad_buffer[: self.vad_frame_size]
-
-                                    try:
-                                        is_speech = self.vad.is_speech(
-                                            frame_bytes, self.vad_sample_rate
-                                        )
-                                        if is_speech:
-                                            self.speech_frames.append(frame_bytes)
-                                            self.is_currently_speech = True
-                                            self.silence_frames_after_speech = 0
-                                        elif self.is_currently_speech:
-                                            # If speech was ongoing, append silence frame too for a short duration
-                                            self.speech_frames.append(frame_bytes)
-                                            self.silence_frames_after_speech += 1
-                                            if (
-                                                self.silence_frames_after_speech
-                                                >= self.min_silence_frames_to_stop
-                                            ):
-                                                logger.info(
-                                                    f"VAD: Detected end of speech after {self.silence_frames_after_speech} silent frames."
-                                                )
-                                                # self.recording = False # Stop recording if enough silence after speech
-                                                # This might be too aggressive, consider how to signal end of utterance
-                                                self.is_currently_speech = (
-                                                    False  # Reset speech state
-                                                )
-                                        # else: VAD is not speech and was not speech (initial silence) - do nothing
-                                    except Exception as e:
-                                        logger.error(f"VAD processing error: {e}")
-                            else:  # VAD disabled
+                                try:
+                                    self.audio_queue.put_nowait(audio_int16.tobytes())
+                                except queue.Full:
+                                    logger.warning(
+                                        "Audio queue full, dropping audio data"
+                                    )
+                            else:
+                                # For non-VAD, directly append to accumulated data
                                 self.accumulated_audio_data.append(indata.copy())
                         else:
                             logger.warning("Received empty audio data in callback")
@@ -333,6 +319,74 @@ class Recorder:
             finally:
                 self.stream = None
 
+    def _start_vad_worker(self) -> None:
+        """Start the VAD worker thread."""
+        if self.vad_enabled and self.vad_worker_thread is None:
+            self.vad_worker_stop_event.clear()
+            self.vad_worker_thread = threading.Thread(
+                target=self._vad_worker_thread, daemon=True
+            )
+            self.vad_worker_thread.start()
+            logger.info("VAD worker thread started")
+
+    def _stop_vad_worker(self) -> None:
+        """Stop the VAD worker thread."""
+        if self.vad_worker_thread is not None:
+            self.vad_worker_stop_event.set()
+            self.vad_worker_thread.join(timeout=1.0)
+            self.vad_worker_thread = None
+            logger.info("VAD worker thread stopped")
+
+    def _vad_worker_thread(self) -> None:
+        """VAD worker thread that processes audio data from the queue."""
+        logger.info("VAD worker thread started processing")
+
+        while not self.vad_worker_stop_event.is_set():
+            try:
+                # Get audio data from queue with timeout
+                audio_bytes = self.audio_queue.get(timeout=0.1)
+
+                # Process VAD on this audio data
+                self.vad_buffer.extend(audio_bytes)
+
+                while len(self.vad_buffer) >= self.vad_frame_size:
+                    frame_bytes = self.vad_buffer[: self.vad_frame_size]
+                    del self.vad_buffer[: self.vad_frame_size]
+
+                    try:
+                        is_speech = self.vad.is_speech(
+                            frame_bytes, self.vad_sample_rate
+                        )
+                        if is_speech:
+                            self.speech_frames.append(frame_bytes)
+                            self.is_currently_speech = True
+                            self.silence_frames_after_speech = 0
+                        elif self.is_currently_speech:
+                            # If speech was ongoing, append silence frame too for a short duration
+                            self.speech_frames.append(frame_bytes)
+                            self.silence_frames_after_speech += 1
+                            if (
+                                self.silence_frames_after_speech
+                                >= self.min_silence_frames_to_stop
+                            ):
+                                logger.info(
+                                    f"VAD: Detected end of speech after {self.silence_frames_after_speech} silent frames."
+                                )
+                                self.is_currently_speech = False
+                        # else: VAD is not speech and was not speech (initial silence) - do nothing
+                    except Exception as e:
+                        logger.error(f"VAD processing error: {e}")
+
+                self.audio_queue.task_done()
+
+            except queue.Empty:
+                # Timeout reached, continue loop to check stop event
+                continue
+            except Exception as e:
+                logger.error(f"Error in VAD worker thread: {e}")
+
+        logger.info("VAD worker thread finished")
+
     def _record_impl(self, language: str | None = None) -> None:
         """
         Core recording logic executed in a separate thread.
@@ -358,6 +412,14 @@ class Recorder:
                 self.speech_frames = []
                 self.is_currently_speech = False
                 self.silence_frames_after_speech = 0
+                # Clear the audio queue
+                while not self.audio_queue.empty():
+                    try:
+                        self.audio_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                # Start VAD worker thread only after stream is ready
+                pass  # Will start in stream context
 
         samplerate = 16000  # Standard samplerate for transcription
 
@@ -376,6 +438,10 @@ class Recorder:
                 logger.info(
                     f"Recording started. Samplerate: {samplerate}, Device: {input_device}"
                 )
+
+                # Start VAD worker thread now that stream is ready
+                if self.vad_enabled:
+                    self._start_vad_worker()
 
                 # Loop to keep the recording active while self.recording is True
                 while True:
@@ -404,6 +470,7 @@ class Recorder:
                     self.vad_buffer = bytearray()  # Also clear vad_buffer
             # Cleanup of the stream is handled by _stream_context
             # Cleanup of the audio_buffer (if created) happens when it's used or in _cleanup_previous_session
+            # VAD worker cleanup is handled by _stream_context
 
     def _process_recorded_data(self, language: str | None) -> None:
         """Processes audio data after the recording loop finishes."""
