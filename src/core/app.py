@@ -7,6 +7,7 @@ import threading
 import time
 from typing import Any
 
+import aiohttp
 from pynput import keyboard
 
 from ..core.utils import loadwav, playsound
@@ -40,6 +41,9 @@ class App:
         self.timer: threading.Timer | None = None
         self.last_state_change = 0
         self.state_change_delay = const.STATE_CHANGE_DELAY_SECS
+
+        # Initialize api_session as None, will be created in async context
+        self.api_session: aiohttp.ClientSession | None = None
 
         self._configure_platform_keys()
         self.m = create_state_machine()
@@ -87,10 +91,18 @@ class App:
         logger.info("Starting asyncio event loop.")
         asyncio.set_event_loop(self.async_loop)
         try:
+            # Schedule session creation as a task
+            self.async_loop.create_task(self._create_api_session())
             self.async_loop.run_forever()
         finally:
             self.async_loop.close()
             logger.info("Asyncio event loop closed.")
+
+    async def _create_api_session(self):
+        """Create the shared HTTP session in the async context."""
+        timeout = aiohttp.ClientTimeout(total=const.API_REQUEST_TIMEOUT_SECS)
+        self.api_session = aiohttp.ClientSession(timeout=timeout)
+        logger.info("Shared API session created.")
 
     def run(self) -> None:
         """Main application entry point."""
@@ -147,6 +159,14 @@ class App:
             logger.error("No audio data to transcribe.")
             await self._handle_error()
             return
+
+        # Ensure API session is created for API transcribers
+        if not self.api_session and hasattr(self.transcriber, "_session"):
+            await self._create_api_session()
+            # Update transcriber with the new session
+            if hasattr(self.transcriber, "_session") and not self.transcriber._session:
+                self.transcriber._session = self.api_session
+                self.transcriber._owns_session = False
 
         with self.status_icon_lock:
             self.status_icon.update_state(StatusIconState.TRANSCRIBING)
@@ -219,7 +239,20 @@ class App:
                 future.result(timeout=const.TRANSCRIBER_CLOSE_TIMEOUT_SECS)
 
             model_name = getattr(const, f"DEFAULT_{transcriber_id.upper()}_MODEL")
+
+            # Create the new transcriber
             self.transcriber = self._create_transcriber(transcriber_id, model_name)
+
+            # If it's an API transcriber and we have a session, ensure it's properly set
+            if (
+                transcriber_id in ["openai", "groq"]
+                and hasattr(self.transcriber, "_session")
+                and self.api_session
+                and not self.api_session.closed
+            ):
+                self.transcriber._session = self.api_session
+                self.transcriber._owns_session = False
+
             self.config.set_transcriber(transcriber_id)
             self.config.set_model_name(model_name)
             logger.info(
@@ -238,7 +271,13 @@ class App:
         cls = transcriber_map.get(transcriber_id)
         if not cls:
             raise ValueError(f"Unknown transcriber: {transcriber_id}")
-        return cls(self.m.finish_transcribing, model_name)
+
+        # Pass session to API transcribers, local transcriber doesn't need it
+        # Note: api_session may be None during initialization, that's handled by APITranscriber
+        if transcriber_id in ["openai", "groq"]:
+            return cls(self.m.finish_transcribing, model_name, self.api_session)
+        else:
+            return cls(self.m.finish_transcribing, model_name)
 
     def _load_sound_effects(self) -> dict[str, Any]:
         sounds = {
@@ -309,6 +348,18 @@ class App:
                     future.result(timeout=const.TRANSCRIBER_CLEANUP_TIMEOUT_SECS)
                 except Exception as e:
                     logger.warning(f"Transcriber did not close cleanly: {e}")
+
+            # Close shared API session
+            if self.api_session and not self.api_session.closed:
+                future = asyncio.run_coroutine_threadsafe(
+                    self.api_session.close(), self.async_loop
+                )
+                try:
+                    future.result(timeout=const.TRANSCRIBER_CLEANUP_TIMEOUT_SECS)
+                    logger.info("Shared API session closed.")
+                except Exception as e:
+                    logger.warning(f"API session did not close cleanly: {e}")
+
             self.async_loop.call_soon_threadsafe(self.async_loop.stop)
 
         if self.async_thread.is_alive():

@@ -44,7 +44,9 @@ def clear_model_cache():
     global _model_cache
     if _model_cache:
         logger.info("Clearing model cache...")
-        for cache_key in _model_cache:
+        # Create a copy of keys to avoid dictionary changed size during iteration
+        cache_keys = list(_model_cache.keys())
+        for cache_key in cache_keys:
             logger.info(f"Unloading cached model: {cache_key}")
             del _model_cache[cache_key]
         _model_cache.clear()
@@ -96,12 +98,19 @@ class APITranscriber(BaseTranscriber):
     API_ENDPOINT = ""
     API_KEY_ENV_VAR = ""
 
-    def __init__(self, callback: Callable, model: str):
+    def __init__(
+        self,
+        callback: Callable,
+        model: str,
+        session: aiohttp.ClientSession | None = None,
+    ):
         super().__init__(callback, model)
         self.api_key = os.environ.get(self.API_KEY_ENV_VAR)
         if not self.api_key:
             raise ValueError(f"{self.API_KEY_ENV_VAR} environment variable not set.")
-        self._session: aiohttp.ClientSession | None = None
+        self._session = session
+        # Track whether we own the session (for cleanup)
+        self._owns_session = session is None
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -110,7 +119,8 @@ class APITranscriber(BaseTranscriber):
         return self._session
 
     async def close(self):
-        if self._session and not self._session.closed:
+        # Only close session if we created it ourselves (not shared)
+        if self._session and not self._session.closed and self._owns_session:
             await self._session.close()
             logger.info(f"{self.__class__.__name__} aiohttp session closed.")
 
