@@ -21,6 +21,7 @@ from ..services.transcriber import (
     GroqTranscriber,
     LocalTranscriber,
     OpenAITranscriber,
+    clear_model_cache,
 )
 from . import constants as const
 from .config import AppConfig
@@ -312,4 +313,8 @@ class App:
 
         if self.async_thread.is_alive():
             self.async_thread.join(timeout=const.ASYNC_THREAD_JOIN_TIMEOUT_SECS)
+
+        # Clear model cache on application exit
+        clear_model_cache()
+
         logger.info("Resource cleanup completed.")

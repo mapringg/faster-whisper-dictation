@@ -15,6 +15,44 @@ from ..core import constants as const
 
 logger = logging.getLogger(__name__)
 
+# Global model cache to avoid reloading models
+_model_cache = {}
+
+
+def get_cached_model(
+    model_name: str, device: str = "cpu", compute_type: str = "int8"
+) -> WhisperModel:
+    """Get a cached WhisperModel instance or create a new one if not cached."""
+    cache_key = f"{model_name}_{device}_{compute_type}"
+    if cache_key not in _model_cache:
+        logger.info(
+            f"Loading faster-whisper model: '{model_name}' (device: {device}, compute_type: {compute_type})"
+        )
+        _model_cache[cache_key] = WhisperModel(
+            model_name, device=device, compute_type=compute_type
+        )
+        logger.info(
+            f"Faster-whisper model '{model_name}' loaded and cached successfully."
+        )
+    else:
+        logger.info(f"Using cached faster-whisper model: '{model_name}'")
+    return _model_cache[cache_key]
+
+
+def clear_model_cache():
+    """Clear all cached models and free memory."""
+    global _model_cache
+    if _model_cache:
+        logger.info("Clearing model cache...")
+        for cache_key in _model_cache:
+            logger.info(f"Unloading cached model: {cache_key}")
+            del _model_cache[cache_key]
+        _model_cache.clear()
+        import gc
+
+        gc.collect()
+        logger.info("Model cache cleared successfully.")
+
 
 class Segment:
     """Represents a segment of transcribed text."""
@@ -178,11 +216,9 @@ class LocalTranscriber(BaseTranscriber):
     def __init__(self, callback: Callable, model: str):
         super().__init__(callback, model)
         try:
-            logger.info(f"Loading faster-whisper model: '{self.model}'")
-            self.whisper_model = WhisperModel(
+            self.whisper_model = get_cached_model(
                 self.model, device="cpu", compute_type="int8"
             )
-            logger.info("Faster-whisper model loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to load faster-whisper model: {e}")
             raise
@@ -222,8 +258,6 @@ class LocalTranscriber(BaseTranscriber):
         return "".join(segment.text for segment in segments)
 
     async def close(self):
-        logger.info("Unloading faster-whisper model.")
-        del self.whisper_model
-        import gc
-
-        gc.collect()
+        logger.info("LocalTranscriber closed (model remains cached).")
+        # Don't delete the model here as it's cached and shared
+        # Model cleanup is handled by clear_model_cache() on application exit
