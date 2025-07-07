@@ -11,7 +11,11 @@ import aiohttp
 from pynput import keyboard
 
 from ..core.utils import loadwav, playsound
-from ..services.input_handler import ClipboardPaster, DoubleKeyListener
+from ..services.input_handler import (
+    ClipboardPaster,
+    ConsolidatedKeyListener,
+    DoubleKeyListener,
+)
 from ..services.recorder import Recorder
 from ..services.status_indicator import (
     StatusIcon,
@@ -307,17 +311,23 @@ class App:
 
     def _setup_key_listeners(self) -> tuple[DoubleKeyListener, DoubleKeyListener]:
         trigger_key = self._normalize_key(self.config.trigger_key)
-        key_listener = DoubleKeyListener(self.start, self.stop, trigger_key)
-        cancel_listener = DoubleKeyListener(
-            self.cancel_recording, lambda: None, self.cancel_key
+
+        # Create consolidated key listener that handles both keys
+        unified_listener = ConsolidatedKeyListener(
+            trigger_key=trigger_key,
+            trigger_activate=self.start,
+            trigger_deactivate=self.stop,
+            cancel_key=self.cancel_key,
+            cancel_activate=self.cancel_recording,
+            cancel_deactivate=lambda: None,
+            shutdown_event=self.shutdown_event,
         )
 
-        key_listener.shutdown_event = self.shutdown_event
-        cancel_listener.shutdown_event = self.shutdown_event
+        # Start single thread for both listeners
+        threading.Thread(target=unified_listener.run, daemon=True).start()
 
-        threading.Thread(target=key_listener.run, daemon=True).start()
-        threading.Thread(target=cancel_listener.run, daemon=True).start()
-        return key_listener, cancel_listener
+        # Return compatibility objects
+        return unified_listener, unified_listener
 
     def signal_handler(self, signum, frame):
         logger.warning(f"Received signal {signum}. Initiating shutdown...")
@@ -338,6 +348,10 @@ class App:
             self.timer.cancel()
         if self.m.is_RECORDING():
             self.recorder.stop()
+
+        # Clean up recorder worker thread
+        if hasattr(self.recorder, "cleanup"):
+            self.recorder.cleanup()
 
         if self.async_loop.is_running():
             if hasattr(self.transcriber, "close"):

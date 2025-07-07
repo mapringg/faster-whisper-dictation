@@ -169,6 +169,12 @@ class Recorder:
         self.vad_worker_thread = None
         self.vad_worker_stop_event = threading.Event()
 
+        # Persistent worker thread for recording tasks
+        self.worker_thread = None
+        self.worker_stop_event = threading.Event()
+        self.recording_tasks = queue.Queue()
+        self._start_worker_thread()
+
         # Stream error tracking
         self.stream_error_count = 0
         self.persistent_stream_error = False
@@ -210,13 +216,39 @@ class Recorder:
             self.conversion_buffer = np.zeros(1024, dtype=np.int16)
 
     def start(self, event) -> None:
-        """Start recording in a new thread."""
+        """Start recording using persistent worker thread."""
         logger.info("Starting recording...")
-        # The _recording_state context manager will handle cleanup of previous session
-
         language = event.kwargs.get("language") if hasattr(event, "kwargs") else None
-        thread = threading.Thread(target=self._record_impl, args=(language,))
-        thread.start()
+
+        # Send recording task to worker thread instead of creating new thread
+        self.recording_tasks.put(("start", language))
+
+    def _start_worker_thread(self) -> None:
+        """Start the persistent worker thread for recording tasks."""
+        if self.worker_thread is None or not self.worker_thread.is_alive():
+            self.worker_stop_event.clear()
+            self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+            self.worker_thread.start()
+            logger.info("Worker thread started")
+
+    def _worker_loop(self) -> None:
+        """Main loop for the persistent worker thread."""
+        logger.info("Worker thread loop started")
+        while not self.worker_stop_event.is_set():
+            try:
+                # Wait for recording tasks with timeout
+                task = self.recording_tasks.get(timeout=1.0)
+                if task[0] == "start":
+                    language = task[1]
+                    self._record_impl(language)
+                elif task[0] == "stop":
+                    break
+                self.recording_tasks.task_done()
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"Error in worker thread: {e}")
+        logger.info("Worker thread loop ended")
 
     def stop(self) -> None:
         """Stop recording."""
@@ -231,6 +263,24 @@ class Recorder:
         # Stop VAD worker thread
         self._stop_vad_worker()
         # Stream cleanup is handled by the context manager
+
+    def cleanup(self) -> None:
+        """Clean up resources including worker thread."""
+        logger.info("Cleaning up recorder resources...")
+        # Stop worker thread
+        if self.worker_thread and self.worker_thread.is_alive():
+            self.worker_stop_event.set()
+            self.recording_tasks.put(("stop", None))
+            self.worker_thread.join(timeout=2.0)
+            if self.worker_thread.is_alive():
+                logger.warning("Worker thread did not stop gracefully")
+
+        # Stop VAD worker thread
+        self._stop_vad_worker()
+
+        # Clean up any remaining session
+        with self.lock:
+            self._cleanup_previous_session()
 
     def _initialize_recording_buffer(self) -> None:
         """Initialize the recording buffer from the pool."""

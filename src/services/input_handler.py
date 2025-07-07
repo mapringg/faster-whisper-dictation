@@ -91,6 +91,75 @@ class ClipboardPaster:
             self.callback()
 
 
+class ConsolidatedKeyListener:
+    """Consolidated key listener that handles multiple keys in a single thread."""
+
+    def __init__(
+        self,
+        trigger_key: Any,
+        trigger_activate: KeyboardCallback,
+        trigger_deactivate: KeyboardCallback,
+        cancel_key: Any,
+        cancel_activate: KeyboardCallback,
+        cancel_deactivate: KeyboardCallback,
+        shutdown_event: threading.Event,
+        double_click_threshold: float = const.DEFAULT_DOUBLE_CLICK_THRESHOLD_SECS,
+    ):
+        self.trigger_key = trigger_key
+        self.trigger_activate = trigger_activate
+        self.trigger_deactivate = trigger_deactivate
+        self.cancel_key = cancel_key
+        self.cancel_activate = cancel_activate
+        self.cancel_deactivate = cancel_deactivate
+        self.shutdown_event = shutdown_event
+        self.double_click_threshold = double_click_threshold
+
+        # Track last press times for each key
+        self.trigger_last_press = 0.0
+        self.cancel_last_press = 0.0
+        self.listener: keyboard.Listener | None = None
+
+    def on_press(self, key: Any):
+        current_time = time.time()
+
+        # Handle trigger key
+        if key == self.trigger_key:
+            if (current_time - self.trigger_last_press) < self.double_click_threshold:
+                self.trigger_activate()
+                self.trigger_last_press = 0  # Reset to prevent triple-click
+            else:
+                self.trigger_deactivate()
+                self.trigger_last_press = current_time
+            return
+
+        # Handle cancel key
+        if key == self.cancel_key:
+            if (current_time - self.cancel_last_press) < self.double_click_threshold:
+                self.cancel_activate()
+                self.cancel_last_press = 0  # Reset to prevent triple-click
+            else:
+                self.cancel_deactivate()
+                self.cancel_last_press = current_time
+            return
+
+    def run(self):
+        """Start listening for key events in a blocking manner."""
+        try:
+            with keyboard.Listener(on_press=self.on_press) as listener:
+                self.listener = listener
+                # Block until shutdown is signaled
+                self.shutdown_event.wait()
+                listener.stop()
+        except Exception as e:
+            logger.error(f"Error in consolidated key listener: {e}")
+        finally:
+            logger.info("Consolidated key listener stopped.")
+
+    def stop(self):
+        """Signals the listener thread to stop."""
+        self.shutdown_event.set()
+
+
 class DoubleKeyListener:
     """Handles double-press and single-press events for a specific key."""
 
