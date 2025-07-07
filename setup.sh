@@ -112,6 +112,21 @@ elif [[ -f /etc/debian_version ]] || [[ -f /etc/linuxmint/info ]]; then
         log "$(tput setaf 1)Error: Service failed to start. Check logs with: journalctl --user -u dictation.service -n 50$(tput sgr0)"
         exit 1
     fi
+
+    # Create desktop autostart file
+    DESKTOP_PATH=~/.config/autostart/dictation-autostart.desktop
+    mkdir -p "$(dirname "$DESKTOP_PATH")"
+    log "Creating desktop autostart file at $DESKTOP_PATH"
+    cat > "$DESKTOP_PATH" << EOF
+[Desktop Entry]
+Type=Application
+Name=Dictation Service
+Comment=Restart dictation service after login
+Exec=$SCRIPT_DIR/run.sh
+Terminal=false
+Hidden=false
+X-GNOME-Autostart-enabled=true
+EOF
     log "Linux setup complete!"
     log "To check status: systemctl --user status dictation.service"
     if [ "$REMIND_LOGOUT" = true ]; then
