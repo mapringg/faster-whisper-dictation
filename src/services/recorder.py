@@ -2,6 +2,7 @@ import io
 import logging
 import queue
 import threading
+from collections import deque
 from contextlib import contextmanager
 
 import numpy as np
@@ -20,6 +21,62 @@ from ..core import constants as const
 from ..core.utils import get_default_devices
 
 logger = logging.getLogger(__name__)
+
+
+class AudioBuffer:
+    """Pre-allocated buffer for audio data with zero-copy operations."""
+
+    def __init__(self, size: int, dtype=np.float32):
+        self.buffer = np.zeros(size, dtype=dtype)
+        self.write_pos = 0
+        self.data_size = 0
+        self.max_size = size
+
+    def append(self, data: np.ndarray) -> bool:
+        """Append data to buffer. Returns True if successful, False if buffer full."""
+        if self.write_pos + len(data) > self.max_size:
+            return False
+
+        self.buffer[self.write_pos : self.write_pos + len(data)] = data.flatten()
+        self.write_pos += len(data)
+        self.data_size += len(data)
+        return True
+
+    def get_data(self) -> np.ndarray:
+        """Get the accumulated data as a view (zero-copy)."""
+        return self.buffer[: self.data_size]
+
+    def reset(self):
+        """Reset buffer for reuse."""
+        self.write_pos = 0
+        self.data_size = 0
+
+
+class BufferPool:
+    """Pool of pre-allocated buffers for efficient memory management."""
+
+    def __init__(self, buffer_size: int, pool_size: int = 4):
+        self.available_buffers = deque()
+        self.buffer_size = buffer_size
+
+        # Pre-allocate buffers
+        for _ in range(pool_size):
+            self.available_buffers.append(AudioBuffer(buffer_size))
+
+    def get_buffer(self) -> AudioBuffer:
+        """Get a buffer from the pool or create new one if empty."""
+        if self.available_buffers:
+            buffer = self.available_buffers.popleft()
+            buffer.reset()
+            return buffer
+        else:
+            # Pool exhausted, create new buffer
+            return AudioBuffer(self.buffer_size)
+
+    def return_buffer(self, buffer: AudioBuffer):
+        """Return a buffer to the pool for reuse."""
+        buffer.reset()
+        self.available_buffers.append(buffer)
 
 
 class Recorder:
@@ -77,6 +134,7 @@ class Recorder:
         try:
             with self.lock:
                 self._cleanup_previous_session()
+                self._initialize_recording_buffer()
                 self.recording = True
             yield
         finally:
@@ -97,6 +155,13 @@ class Recorder:
         self.stream = None
         self.lock = threading.Lock()  # Thread-safe state management
         self.audio_buffer = None
+
+        # Calculate buffer size: 30 seconds at 16kHz sample rate
+        max_recording_samples = const.AUDIO_SAMPLE_RATE_HZ * 30
+        self.buffer_pool = BufferPool(max_recording_samples, pool_size=4)
+        self.current_audio_buffer = None
+
+        # Legacy list for backward compatibility - will be phased out
         self.accumulated_audio_data = []
 
         # Lock-free queue for audio data from callback to worker thread
@@ -140,6 +205,10 @@ class Recorder:
             self.min_silence_frames_to_stop = const.VAD_MIN_SILENCE_FRAMES_TO_STOP
             self.is_currently_speech = False
 
+            # Pre-allocate conversion buffer to avoid temporary arrays
+            # Maximum expected audio chunk size (e.g., 1024 samples per callback)
+            self.conversion_buffer = np.zeros(1024, dtype=np.int16)
+
     def start(self, event) -> None:
         """Start recording in a new thread."""
         logger.info("Starting recording...")
@@ -162,6 +231,11 @@ class Recorder:
         # Stop VAD worker thread
         self._stop_vad_worker()
         # Stream cleanup is handled by the context manager
+
+    def _initialize_recording_buffer(self) -> None:
+        """Initialize the recording buffer from the pool."""
+        if self.current_audio_buffer is None:
+            self.current_audio_buffer = self.buffer_pool.get_buffer()
 
     def _cleanup_previous_session(self) -> None:
         """Clean up any existing recording session."""
@@ -188,6 +262,11 @@ class Recorder:
 
         # Clear accumulated data
         self.accumulated_audio_data = []
+
+        # Return current buffer to pool
+        if self.current_audio_buffer is not None:
+            self.buffer_pool.return_buffer(self.current_audio_buffer)
+            self.current_audio_buffer = None
 
         # Reset VAD state if enabled
         if self.vad_enabled:
@@ -253,17 +332,43 @@ class Recorder:
 
                             # Send audio data to worker thread via queue (non-blocking)
                             if self.vad_enabled:
-                                # Convert float32 to int16 and send to VAD worker
-                                audio_int16 = (indata * 32767).astype(np.int16)
-                                try:
-                                    self.audio_queue.put_nowait(audio_int16.tobytes())
-                                except queue.Full:
-                                    logger.warning(
-                                        "Audio queue full, dropping audio data"
+                                # Use pre-allocated buffer for conversion to avoid temporary arrays
+                                chunk_size = min(
+                                    len(indata), len(self.conversion_buffer)
+                                )
+                                if chunk_size > 0:
+                                    # Convert to int16 using pre-allocated buffer
+                                    flat_data = indata.flatten()[:chunk_size]
+                                    # Safely convert float32 to int16 with proper scaling
+                                    scaled_data = flat_data * 32767
+                                    self.conversion_buffer[:chunk_size] = (
+                                        scaled_data.astype(np.int16)
                                     )
+                                    try:
+                                        self.audio_queue.put_nowait(
+                                            self.conversion_buffer[
+                                                :chunk_size
+                                            ].tobytes()
+                                        )
+                                    except queue.Full:
+                                        logger.warning(
+                                            "Audio queue full, dropping audio data"
+                                        )
                             else:
-                                # For non-VAD, directly append to accumulated data
-                                self.accumulated_audio_data.append(indata.copy())
+                                # For non-VAD, use optimized buffer management
+                                if self.current_audio_buffer is not None:
+                                    # Try to append to current buffer
+                                    if not self.current_audio_buffer.append(indata):
+                                        # Buffer full, fallback to list (this should be rare)
+                                        logger.warning(
+                                            "Audio buffer full, falling back to list"
+                                        )
+                                        self.accumulated_audio_data.append(
+                                            indata.copy()
+                                        )
+                                else:
+                                    # Fallback to list if no buffer available
+                                    self.accumulated_audio_data.append(indata.copy())
                         else:
                             logger.warning("Received empty audio data in callback")
                     except Exception as e:
@@ -532,6 +637,21 @@ class Recorder:
 
     def _process_non_vad_chunks(self) -> np.ndarray | None:
         """Process accumulated audio chunks into audio numpy array."""
+        # Priority: use optimized buffer if available
+        if (
+            self.current_audio_buffer is not None
+            and self.current_audio_buffer.data_size > 0
+        ):
+            logger.info(
+                f"Processing optimized audio buffer with {self.current_audio_buffer.data_size} samples."
+            )
+            # Get data as a view (zero-copy)
+            full_audio_np = (
+                self.current_audio_buffer.get_data().copy()
+            )  # Copy for safety since buffer will be reused
+            return full_audio_np
+
+        # Fallback: use legacy accumulated data
         if not self.accumulated_audio_data:
             logger.warning("No audio data recorded (VAD disabled).")
             self.callback(audio_data=None, error="No audio data recorded")
