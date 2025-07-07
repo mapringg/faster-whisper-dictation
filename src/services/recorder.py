@@ -15,6 +15,7 @@ except ImportError:  # Fallback for unsupported platforms
         "webrtcvad is not available on this platform – Voice Activity Detection will be disabled."
     )
 
+from ..core import constants as const
 from ..core.utils import get_default_devices
 
 logger = logging.getLogger(__name__)
@@ -97,7 +98,7 @@ class Recorder:
         # Stream error tracking
         self.stream_error_count = 0
         self.persistent_stream_error = False
-        self.max_stream_errors = 5  # Maximum consecutive errors before giving up
+        self.max_stream_errors = const.MAX_STREAM_ERRORS
 
         # VAD settings
         self.vad_enabled = vad_enabled
@@ -114,8 +115,12 @@ class Recorder:
                     1
                 )  # Default to moderate if provided sensitivity is invalid
 
-            self.vad_sample_rate = 16000  # VAD expects 8k, 16k, 32k, or 48k
-            self.vad_frame_duration_ms = 30  # VAD supports 10, 20, or 30 ms frames
+            self.vad_sample_rate = (
+                const.AUDIO_SAMPLE_RATE_HZ
+            )  # VAD expects 8k, 16k, 32k, or 48k
+            self.vad_frame_duration_ms = (
+                const.VAD_FRAME_DURATION_MS
+            )  # VAD supports 10, 20, or 30 ms frames
             # Calculate frame size in bytes (16-bit samples, 1 channel)
             self.vad_frame_size = int(
                 self.vad_sample_rate * (self.vad_frame_duration_ms / 1000.0) * 2
@@ -123,9 +128,7 @@ class Recorder:
             self.vad_buffer = bytearray()
             self.speech_frames = []  # To store frames identified as speech
             self.silence_frames_after_speech = 0
-            self.min_silence_frames_to_stop = (
-                10  # e.g., 300ms of silence (10 frames * 30ms/frame)
-            )
+            self.min_silence_frames_to_stop = const.VAD_MIN_SILENCE_FRAMES_TO_STOP
             self.is_currently_speech = False
 
     def start(self, event) -> None:
@@ -380,101 +383,13 @@ class Recorder:
                         if not self.recording or self.persistent_stream_error:
                             break
                     sd.sleep(
-                        100
+                        const.RECORDER_LOOP_SLEEP_MS
                     )  # Sleep briefly to avoid busy-waiting, stream callback handles data
 
                 logger.info("Recording loop finished.")
 
             # Process and save the recorded audio
-            with self.lock:
-                if self.persistent_stream_error:
-                    logger.error(
-                        "Persistent stream error occurred. No audio will be processed."
-                    )
-                    self.callback(
-                        audio_data=None, error="Persistent audio stream error"
-                    )
-                    return
-
-                full_audio_np = None
-                if self.vad_enabled:
-                    if not self.speech_frames:
-                        logger.warning("VAD enabled, but no speech frames recorded.")
-                        self.callback(audio_data=None, error="No speech detected")
-                        return
-
-                    logger.info(
-                        f"Processing {len(self.speech_frames)} VAD speech frames."
-                    )
-                    # Concatenate all byte frames from VAD
-                    all_speech_bytes = b"".join(self.speech_frames)
-                    self.speech_frames = []  # Clear after processing
-
-                    if not all_speech_bytes:
-                        logger.warning("VAD speech frames were empty after join.")
-                        self.callback(
-                            audio_data=None, error="Empty speech data after VAD"
-                        )
-                        return
-
-                    # Convert bytes to int16 numpy array
-                    audio_int16_np = np.frombuffer(all_speech_bytes, dtype=np.int16)
-
-                    # Convert int16 to float32 numpy array
-                    full_audio_np = audio_int16_np.astype(np.float32) / 32767.0
-                    logger.info(
-                        f"VAD processed audio: {full_audio_np.shape}, {full_audio_np.dtype}"
-                    )
-
-                else:  # VAD disabled
-                    if not self.accumulated_audio_data:
-                        logger.warning("No audio data recorded (VAD disabled).")
-                        self.callback(audio_data=None, error="No audio data recorded")
-                        return
-
-                    logger.info(
-                        f"Processing {len(self.accumulated_audio_data)} accumulated audio chunks (VAD disabled)."
-                    )
-                    # Concatenate all recorded numpy arrays
-                    full_audio_np = np.concatenate(self.accumulated_audio_data)
-                    self.accumulated_audio_data = []  # Clear after concatenating
-
-                if full_audio_np is None or full_audio_np.size == 0:
-                    logger.warning(
-                        "Resulting audio data is empty before writing to buffer."
-                    )
-                    self.callback(
-                        audio_data=None, error="Empty audio data after processing"
-                    )
-                    return
-
-                # Create a BytesIO buffer to hold the WAV data
-                self.audio_buffer = io.BytesIO()
-                try:
-                    # Write the numpy array to the BytesIO buffer as a WAV file
-                    sf.write(
-                        self.audio_buffer,
-                        full_audio_np,
-                        samplerate,
-                        format="WAV",
-                        subtype="PCM_16",
-                    )
-                    self.audio_buffer.seek(
-                        0
-                    )  # Reset buffer position to the beginning for reading
-                    logger.info(
-                        f"Audio data written to in-memory WAV buffer (size: {self.audio_buffer.getbuffer().nbytes} bytes)."
-                    )
-                    # Pass the BytesIO object to the callback
-                    self.callback(audio_data=self.audio_buffer, language=language)
-                except Exception as e:
-                    logger.error(f"Error writing WAV data to memory buffer: {str(e)}")
-                    self.callback(
-                        audio_data=None, error=f"Failed to create WAV in memory: {e}"
-                    )
-                    if self.audio_buffer:
-                        self.audio_buffer.close()
-                    self.audio_buffer = None
+            self._process_recorded_data(language)
 
         except Exception as e:
             logger.error(f"An error occurred during recording: {str(e)}")
@@ -489,3 +404,102 @@ class Recorder:
                     self.vad_buffer = bytearray()  # Also clear vad_buffer
             # Cleanup of the stream is handled by _stream_context
             # Cleanup of the audio_buffer (if created) happens when it's used or in _cleanup_previous_session
+
+    def _process_recorded_data(self, language: str | None) -> None:
+        """Processes audio data after the recording loop finishes."""
+        with self.lock:
+            if self.persistent_stream_error:
+                logger.error(
+                    "Persistent stream error occurred. No audio will be processed."
+                )
+                self.callback(audio_data=None, error="Persistent audio stream error")
+                return
+
+            full_audio_np = None
+            if self.vad_enabled:
+                full_audio_np = self._process_vad_frames()
+            else:
+                full_audio_np = self._process_non_vad_chunks()
+
+            if full_audio_np is None or full_audio_np.size == 0:
+                logger.warning(
+                    "Resulting audio data is empty before writing to buffer."
+                )
+                self.callback(
+                    audio_data=None, error="Empty audio data after processing"
+                )
+                return
+
+            audio_buffer = self._package_audio_as_wav(full_audio_np)
+            if audio_buffer:
+                self.callback(audio_data=audio_buffer, language=language)
+            else:
+                self.callback(audio_data=None, error="Failed to create WAV in memory")
+
+    def _process_vad_frames(self) -> np.ndarray | None:
+        """Process VAD speech frames into audio numpy array."""
+        if not self.speech_frames:
+            logger.warning("VAD enabled, but no speech frames recorded.")
+            self.callback(audio_data=None, error="No speech detected")
+            return None
+
+        logger.info(f"Processing {len(self.speech_frames)} VAD speech frames.")
+        # Concatenate all byte frames from VAD
+        all_speech_bytes = b"".join(self.speech_frames)
+        self.speech_frames = []  # Clear after processing
+
+        if not all_speech_bytes:
+            logger.warning("VAD speech frames were empty after join.")
+            self.callback(audio_data=None, error="Empty speech data after VAD")
+            return None
+
+        # Convert bytes to int16 numpy array
+        audio_int16_np = np.frombuffer(all_speech_bytes, dtype=np.int16)
+
+        # Convert int16 to float32 numpy array
+        full_audio_np = audio_int16_np.astype(np.float32) / 32767.0
+        logger.info(
+            f"VAD processed audio: {full_audio_np.shape}, {full_audio_np.dtype}"
+        )
+        return full_audio_np
+
+    def _process_non_vad_chunks(self) -> np.ndarray | None:
+        """Process accumulated audio chunks into audio numpy array."""
+        if not self.accumulated_audio_data:
+            logger.warning("No audio data recorded (VAD disabled).")
+            self.callback(audio_data=None, error="No audio data recorded")
+            return None
+
+        logger.info(
+            f"Processing {len(self.accumulated_audio_data)} accumulated audio chunks (VAD disabled)."
+        )
+        # Concatenate all recorded numpy arrays
+        full_audio_np = np.concatenate(self.accumulated_audio_data)
+        self.accumulated_audio_data = []  # Clear after concatenating
+        return full_audio_np
+
+    def _package_audio_as_wav(self, audio_data: np.ndarray) -> io.BytesIO | None:
+        """Package audio numpy array as WAV format in BytesIO buffer."""
+        self.audio_buffer = io.BytesIO()
+        try:
+            # Write the numpy array to the BytesIO buffer as a WAV file
+            sf.write(
+                self.audio_buffer,
+                audio_data,
+                const.AUDIO_SAMPLE_RATE_HZ,
+                format="WAV",
+                subtype="PCM_16",
+            )
+            self.audio_buffer.seek(
+                0
+            )  # Reset buffer position to the beginning for reading
+            logger.info(
+                f"Audio data written to in-memory WAV buffer (size: {self.audio_buffer.getbuffer().nbytes} bytes)."
+            )
+            return self.audio_buffer
+        except Exception as e:
+            logger.error(f"Error writing WAV data to memory buffer: {str(e)}")
+            if self.audio_buffer:
+                self.audio_buffer.close()
+            self.audio_buffer = None
+            return None

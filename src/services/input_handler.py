@@ -80,7 +80,9 @@ class ClipboardPaster:
                 logger.warning("No text to paste.")
             else:
                 self._copy_to_clipboard(full_text)
-                time.sleep(0.1)  # Small delay for clipboard to update
+                time.sleep(
+                    const.CLIPBOARD_PASTE_DELAY_SECS
+                )  # Small delay for clipboard to update
                 self._simulate_paste()
         except Exception as e:
             logger.error(f"Paste process failed: {e}")

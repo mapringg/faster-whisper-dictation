@@ -8,10 +8,10 @@ from src.cli import parse_args
 from src.core.app import App
 from src.core.utils import load_env_from_file
 
-# Set up logging
+# Set up logging with thread names for better traceability
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    format="%(asctime)s [%(threadName)s] %(levelname)s - %(name)s: %(message)s",
     handlers=[logging.StreamHandler(), logging.FileHandler("/tmp/dictation.log")],
 )
 logger = logging.getLogger(__name__)
