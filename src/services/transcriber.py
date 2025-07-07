@@ -1,7 +1,9 @@
 import asyncio
+import gc
 import io
 import logging
 import os
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
@@ -17,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Global model cache to avoid reloading models
 _model_cache = {}
+_model_cache_lock = threading.Lock()
 
 
 def get_cached_model(
@@ -24,36 +27,36 @@ def get_cached_model(
 ) -> WhisperModel:
     """Get a cached WhisperModel instance or create a new one if not cached."""
     cache_key = f"{model_name}_{device}_{compute_type}"
-    if cache_key not in _model_cache:
-        logger.info(
-            f"Loading faster-whisper model: '{model_name}' (device: {device}, compute_type: {compute_type})"
-        )
-        _model_cache[cache_key] = WhisperModel(
-            model_name, device=device, compute_type=compute_type
-        )
-        logger.info(
-            f"Faster-whisper model '{model_name}' loaded and cached successfully."
-        )
-    else:
-        logger.info(f"Using cached faster-whisper model: '{model_name}'")
-    return _model_cache[cache_key]
+    with _model_cache_lock:
+        if cache_key not in _model_cache:
+            logger.info(
+                f"Loading faster-whisper model: '{model_name}' (device: {device}, compute_type: {compute_type})"
+            )
+            _model_cache[cache_key] = WhisperModel(
+                model_name, device=device, compute_type=compute_type
+            )
+            logger.info(
+                f"Faster-whisper model '{model_name}' loaded and cached successfully."
+            )
+        else:
+            logger.info(f"Using cached faster-whisper model: '{model_name}'")
+        return _model_cache[cache_key]
 
 
 def clear_model_cache():
     """Clear all cached models and free memory."""
     global _model_cache
-    if _model_cache:
-        logger.info("Clearing model cache...")
-        # Create a copy of keys to avoid dictionary changed size during iteration
-        cache_keys = list(_model_cache.keys())
-        for cache_key in cache_keys:
-            logger.info(f"Unloading cached model: {cache_key}")
-            del _model_cache[cache_key]
-        _model_cache.clear()
-        import gc
-
-        gc.collect()
-        logger.info("Model cache cleared successfully.")
+    with _model_cache_lock:
+        if _model_cache:
+            logger.info("Clearing model cache...")
+            # Create a copy of keys to avoid dictionary changed size during iteration
+            cache_keys = list(_model_cache.keys())
+            for cache_key in cache_keys:
+                logger.info(f"Unloading cached model: {cache_key}")
+                del _model_cache[cache_key]
+            _model_cache.clear()
+            gc.collect()
+            logger.info("Model cache cleared successfully.")
 
 
 class Segment:
